@@ -17,9 +17,14 @@ mirroring or PR-fanout.
   read-only REST; mirroring is delegated to ghorg; commits/pushes/PRs are
   delegated to multi-gitter. Adding a `git` exec or a PR-create call is out of
   scope — it means you're reinventing a delegated tool.
-- Never execute a real (non-dry-run) `goldfinger apply` against real repos — that
-  opens PRs via multi-gitter and is always run by the human. `apply` defaults to
-  dry-run.
+- A real (non-dry-run) `goldfinger apply` opens PRs via multi-gitter and must
+  never happen on an agent's own initiative or by accident — hence `apply`
+  defaults to dry-run and a real run additionally requires `--confirm`. An agent
+  **may** perform the real run, but only when the human has explicitly authorized
+  this specific fleet change; even then it must (1) run the dry-run first and
+  present the diff, (2) prefer `--draft` so PRs open not-ready-for-review, and
+  (3) pass `--dry-run=false --confirm`. Absent explicit authorization, the real
+  run is the human's to execute.
 - The selection lockfile is authoritative: `mirror` and `apply` operate on it and
   must never re-run discovery. "The repos I mirror" and "the repos I change" are
   provably the same set — that guarantee is the whole product.

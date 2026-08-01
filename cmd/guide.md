@@ -39,8 +39,11 @@ WORKFLOW
 SAFETY — READ THIS
   - `apply` defaults to --dry-run: it shows the planned change and opens NOTHING.
   - A real run needs BOTH --dry-run=false AND --confirm. This is deliberate.
-  - If you are an AI agent: do NOT run a real (non-dry-run) apply. Present the
-    dry-run result to the human and let them run the real apply themselves.
+  - If you are an AI agent: never run a real (non-dry-run) apply on your own
+    initiative. When the human has explicitly authorized this fleet change, you
+    may run it — but dry-run first, present the diff, prefer --draft (PRs open
+    not-ready-for-review), and pass --dry-run=false --confirm. Otherwise present
+    the dry-run result and let the human run the real apply themselves.
 
 NOTES FOR AI AGENTS
   - The selection lockfile is JSON — read it directly for structured state.

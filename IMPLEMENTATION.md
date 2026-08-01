@@ -18,10 +18,15 @@ You are implementing this plan from scratch. Everything you need is in this repo
 4. Things only the human can provide — stop and ask, don't work around:
    - a `GOLD_FINGER_PAT` PAT for live testing (exported in their shell, never
      pasted into chat)
-   - execution of any real (non-dry-run) `goldfinger apply` — that opens PRs
-5. Live *read-only* checks you may run yourself once a token is in the env:
-   `goldfinger select` against a real owner, and `goldfinger mirror` (cloning is
-   read-only w.r.t. GitHub). Anything that opens a PR is the human's to run.
+   - explicit authorization for a real (non-dry-run) `goldfinger apply` — that
+     opens PRs. An agent must never launch one on its own initiative; once the
+     human has authorized a specific fleet change, the agent may run it, dry-run
+     first and preferring `--draft` (see step 5).
+5. Live checks you may run yourself once a token is in the env: `goldfinger
+   select` against a real owner and `goldfinger mirror` (both read-only w.r.t.
+   GitHub) any time. A real `apply` that opens PRs is gated: run the dry-run
+   first, present the diff, and only proceed to `--dry-run=false --confirm` (with
+   `--draft`) when the human has explicitly authorized this change.
 6. `go build ./...`, `go vet ./...`, `go test ./...` clean before every commit;
    `make check` mirrors CI.
 
@@ -224,8 +229,10 @@ PR-opening apply remains the human's to run.
 [DONE, CI green.]
 4. **apply (dry-run first)** — `apply` package + command: read lockfile → exec
    multi-gitter with `--repo` list + script + `--dry-run`. Deliverable: a dry-run
-   apply shows multi-gitter's planned change across the set. The real
-   PR-opening run is **the human's** to execute and confirm.
+   apply shows multi-gitter's planned change across the set. The real PR-opening
+   run always follows a dry-run and explicit human authorization; when authorized
+   an agent may execute it (preferring `--draft`), otherwise it's the human's to
+   run.
 5. **Hardening + AI-facing docs** — token-redaction audit across both
    shell-outs, tool-presence errors, lockfile schema-version handling,
    `--dry-run=false` confirmation guard, README usage verified end-to-end. Plus,
