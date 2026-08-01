@@ -1,6 +1,6 @@
 module github.com/redscaresu/goldfinger
 
-go 1.25.0
+go 1.25.12
 
 require (
 	github.com/google/go-github/v89 v89.0.0
