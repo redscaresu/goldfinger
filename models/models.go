@@ -19,6 +19,12 @@ func (r Repo) FullName() string {
 	return r.Owner + "/" + r.Name
 }
 
+// Owner types as reported by the GitHub API and stored in a Selection.
+const (
+	OwnerUser         = "User"
+	OwnerOrganization = "Organization"
+)
+
 // SelectionFilter records how a selection was resolved, for provenance.
 type SelectionFilter struct {
 	AllRepos bool     `json:"allRepos"`

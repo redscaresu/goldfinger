@@ -32,7 +32,7 @@ func (f fakeResolver) ListRepos(context.Context, string) ([]models.Repo, string,
 func TestRunSelectWritesLockfile(t *testing.T) {
 	r := fakeResolver{
 		login:     "redscaresu",
-		ownerType: "User",
+		ownerType: models.OwnerUser,
 		repos: []models.Repo{
 			{Owner: "redscaresu", Name: "platform-svc", Topics: []string{"platform"}},
 			{Owner: "redscaresu", Name: "web", Topics: []string{"frontend"}},
@@ -55,7 +55,7 @@ func TestRunSelectWritesLockfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.SelectionVersion, sel.Version)
 	assert.Equal(t, "redscaresu", sel.Owner)
-	assert.Equal(t, "User", sel.OwnerType)
+	assert.Equal(t, models.OwnerUser, sel.OwnerType)
 	assert.Equal(t, []string{"platform"}, sel.Filter.Topics)
 	assert.False(t, sel.ResolvedAt.IsZero())
 	require.Len(t, sel.Repos, 1)

@@ -51,12 +51,6 @@ func (c *Client) ensureLogin(ctx context.Context) error {
 	return nil
 }
 
-// Owner type constants as reported by the GitHub API.
-const (
-	OwnerUser         = "User"
-	OwnerOrganization = "Organization"
-)
-
 // ListRepos returns every repository owned by owner along with the owner's type
 // ("User" or "Organization"), dispatching to the correct endpoint based on
 // whether owner is the authenticated user, another user, or an organization.
@@ -73,27 +67,27 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, st
 				ListOptions: github.ListOptions{Page: page, PerPage: perPage},
 			})
 		})
-		return repos, OwnerUser, err
+		return repos, models.OwnerUser, err
 	}
 
 	u, _, err := c.gh.Users.Get(ctx, owner)
 	if err != nil {
 		return nil, "", fmt.Errorf("look up owner %q: %w", owner, err)
 	}
-	if u.GetType() == OwnerOrganization {
+	if u.GetType() == models.OwnerOrganization {
 		repos, err := c.paginate(func(page int) ([]*github.Repository, *github.Response, error) {
 			return c.gh.Repositories.ListByOrg(ctx, owner, &github.RepositoryListByOrgOptions{
 				ListOptions: github.ListOptions{Page: page, PerPage: perPage},
 			})
 		})
-		return repos, OwnerOrganization, err
+		return repos, models.OwnerOrganization, err
 	}
 	repos, err := c.paginate(func(page int) ([]*github.Repository, *github.Response, error) {
 		return c.gh.Repositories.ListByUser(ctx, owner, &github.RepositoryListByUserOptions{
 			ListOptions: github.ListOptions{Page: page, PerPage: perPage},
 		})
 	})
-	return repos, OwnerUser, err
+	return repos, models.OwnerUser, err
 }
 
 // paginate walks every page of a repo listing, following NextPage, and maps

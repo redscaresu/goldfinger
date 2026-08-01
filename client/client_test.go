@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/go-github/v89/github"
+	"github.com/redscaresu/goldfinger/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -68,7 +69,7 @@ func TestListReposOrgPagination(t *testing.T) {
 
 	repos, ownerType, err := c.ListRepos(context.Background(), "acme")
 	require.NoError(t, err)
-	assert.Equal(t, OwnerOrganization, ownerType)
+	assert.Equal(t, models.OwnerOrganization, ownerType)
 	require.Len(t, repos, 4, "all three pages should be accumulated")
 
 	names := []string{repos[0].Name, repos[1].Name, repos[2].Name, repos[3].Name}
@@ -93,7 +94,7 @@ func TestListReposUserPath(t *testing.T) {
 
 	repos, ownerType, err := c.ListRepos(context.Background(), "bob")
 	require.NoError(t, err)
-	assert.Equal(t, OwnerUser, ownerType)
+	assert.Equal(t, models.OwnerUser, ownerType)
 	require.Len(t, repos, 1)
 	assert.Equal(t, "bob/dotfiles", repos[0].FullName())
 }
@@ -111,7 +112,7 @@ func TestListReposAuthenticatedOwnerPath(t *testing.T) {
 
 	repos, ownerType, err := c.ListRepos(context.Background(), "me")
 	require.NoError(t, err)
-	assert.Equal(t, OwnerUser, ownerType)
+	assert.Equal(t, models.OwnerUser, ownerType)
 	require.Len(t, repos, 1)
 	assert.Equal(t, "me/private-thing", repos[0].FullName())
 }
