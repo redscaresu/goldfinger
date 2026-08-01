@@ -187,6 +187,13 @@ Then set your token once:
 export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
 ```
 
+No need to mint a new PAT if you already use the GitHub CLI — reuse that login
+(the token needs `repo` scope, which `gh auth login` grants by default):
+
+```sh
+export GOLD_FINGER_PAT="$(gh auth token)"
+```
+
 goldfinger maps `GOLD_FINGER_PAT` to the env vars ghorg and multi-gitter expect,
 so you only set this one. Run `goldfinger guide` for the operator playbook.
 
