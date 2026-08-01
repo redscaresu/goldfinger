@@ -268,7 +268,25 @@ baseline and is enough for SRE laptops and CI runners.)
 
 **`Makefile`** — thin, mirroring what CI runs so local and CI can't drift:
 `make test` (vet + race tests exactly as CI), `make build` (bin/goldfinger),
-`make check` (build + test), `make help`. No other targets until needed.
+`make check` (build + test), `make hooks` (install the pre-commit hook below),
+`make help`. No other targets until needed.
+
+**Security hygiene** (family conventions from infrafactory, minus its npm/UI
+surface):
+
+- **Pre-commit hook** — `gitleaks protect --staged --no-banner`, the local
+  first line of defense; the CI gitleaks job is the load-bearing backstop
+  since hooks are bypassable with `--no-verify`. Hooks aren't committable, so
+  `make hooks` writes `.git/hooks/pre-commit`; the "Start here" flow and
+  README setup both say to run it once after cloning.
+- **`.github/dependabot.yml`** — two ecosystems, `gomod` and `github-actions`,
+  weekly on Mondays, grouped into one PR per ecosystem to avoid noise,
+  auto-merge deliberately off (every bump gets a human review pass).
+- **`govulncheck` job in ci.yml** — `golang.org/x/vuln/cmd/govulncheck ./...`.
+  Not in the siblings, but cheap on a five-dependency pure-Go repo and this
+  tool holds org-wide write credentials — its dependencies are worth auditing.
+- **`SECURITY.md`** — the family template: private vulnerability reporting via
+  GitHub security advisories (preferred) or email, never public issues.
 
 ## Build order
 
@@ -276,8 +294,10 @@ Each step compiles, is tested, and is independently reviewable:
 
 1. **Skeleton** — `go mod init github.com/redscaresu/goldfinger`, cobra root
    command, `models`, token/flag validation, **plus the CI/CD machinery above**
-   (ci.yml, release.yml, .gitleaks.toml, Makefile) so CI is green from the
-   first code push. Deliverable: `goldfinger --help` and a green Actions run.
+   (ci.yml with test/gitleaks/govulncheck jobs, release.yml, .gitleaks.toml,
+   dependabot.yml, SECURITY.md, Makefile incl. `make hooks`) so CI is green
+   from the first code push. Deliverable: `goldfinger --help` and a green
+   Actions run.
 2. **client + discovery + `repos`** — list and filter org repos. Deliverable:
    `goldfinger repos --org X --topic platform` prints real repos. First point of
    end-to-end validation against the live API.
