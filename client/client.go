@@ -1,0 +1,133 @@
+// Package client wraps the read-only GitHub API surface goldfinger needs:
+// resolving an owner's repositories for a selection. It is the only package
+// that talks to the GitHub API, and it never mutates — writes are delegated to
+// multi-gitter.
+package client
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/go-github/v89/github"
+	"github.com/redscaresu/goldfinger/models"
+)
+
+// perPage is the max page size the REST API allows, minimising round-trips.
+const perPage = 100
+
+// Client is a rate-limit-aware GitHub API client.
+type Client struct {
+	gh    *github.Client
+	login string // authenticated user login, resolved by Verify
+}
+
+// New builds a Client authenticated with the given PAT.
+func New(token string) (*Client, error) {
+	gh, err := github.NewClient(github.WithAuthToken(token))
+	if err != nil {
+		return nil, fmt.Errorf("build GitHub client: %w", err)
+	}
+	return &Client{gh: gh}, nil
+}
+
+// Verify confirms the token works and returns the authenticated user's login.
+// It fails fast so a bad token surfaces before any repo work begins.
+func (c *Client) Verify(ctx context.Context) (string, error) {
+	if err := c.ensureLogin(ctx); err != nil {
+		return "", err
+	}
+	return c.login, nil
+}
+
+func (c *Client) ensureLogin(ctx context.Context) error {
+	if c.login != "" {
+		return nil
+	}
+	u, _, err := c.gh.Users.Get(ctx, "")
+	if err != nil {
+		return fmt.Errorf("authenticate with %s: %w", tokenName, err)
+	}
+	c.login = u.GetLogin()
+	return nil
+}
+
+// Owner type constants as reported by the GitHub API.
+const (
+	OwnerUser         = "User"
+	OwnerOrganization = "Organization"
+)
+
+// ListRepos returns every repository owned by owner along with the owner's type
+// ("User" or "Organization"), dispatching to the correct endpoint based on
+// whether owner is the authenticated user, another user, or an organization.
+func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, string, error) {
+	if err := c.ensureLogin(ctx); err != nil {
+		return nil, "", err
+	}
+	// The authenticated user's own repos: use /user/repos so private repos
+	// are included. The authenticated identity is always a user.
+	if owner == c.login {
+		repos, err := c.paginate(func(page int) ([]*github.Repository, *github.Response, error) {
+			return c.gh.Repositories.ListByAuthenticatedUser(ctx, &github.RepositoryListByAuthenticatedUserOptions{
+				Affiliation: "owner",
+				ListOptions: github.ListOptions{Page: page, PerPage: perPage},
+			})
+		})
+		return repos, OwnerUser, err
+	}
+
+	u, _, err := c.gh.Users.Get(ctx, owner)
+	if err != nil {
+		return nil, "", fmt.Errorf("look up owner %q: %w", owner, err)
+	}
+	if u.GetType() == OwnerOrganization {
+		repos, err := c.paginate(func(page int) ([]*github.Repository, *github.Response, error) {
+			return c.gh.Repositories.ListByOrg(ctx, owner, &github.RepositoryListByOrgOptions{
+				ListOptions: github.ListOptions{Page: page, PerPage: perPage},
+			})
+		})
+		return repos, OwnerOrganization, err
+	}
+	repos, err := c.paginate(func(page int) ([]*github.Repository, *github.Response, error) {
+		return c.gh.Repositories.ListByUser(ctx, owner, &github.RepositoryListByUserOptions{
+			ListOptions: github.ListOptions{Page: page, PerPage: perPage},
+		})
+	})
+	return repos, OwnerUser, err
+}
+
+// paginate walks every page of a repo listing, following NextPage, and maps
+// the results into models.Repo.
+func (c *Client) paginate(fetch func(page int) ([]*github.Repository, *github.Response, error)) ([]models.Repo, error) {
+	var out []models.Repo
+	page := 1
+	for {
+		repos, resp, err := fetch(page)
+		if err != nil {
+			return nil, fmt.Errorf("list repos: %w", err)
+		}
+		for _, r := range repos {
+			out = append(out, toRepo(r))
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+	return out, nil
+}
+
+func toRepo(r *github.Repository) models.Repo {
+	return models.Repo{
+		Owner:         r.GetOwner().GetLogin(),
+		Name:          r.GetName(),
+		CloneURL:      r.GetCloneURL(),
+		DefaultBranch: r.GetDefaultBranch(),
+		Topics:        r.Topics,
+		Archived:      r.GetArchived(),
+	}
+}
+
+// tokenName is referenced in error messages; kept in sync with the env var
+// the CLI reads.
+const tokenName = "GOLD_FINGER_PAT"

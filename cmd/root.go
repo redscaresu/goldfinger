@@ -6,6 +6,9 @@ import "github.com/spf13/cobra"
 // -ldflags "-X main.version=<tag>".
 var version = "dev"
 
+// tokenEnvVar is the environment variable holding the GitHub PAT.
+const tokenEnvVar = "GOLD_FINGER_PAT"
+
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "goldfinger",
@@ -15,6 +18,6 @@ func newRootCmd() *cobra.Command {
 		// under a full usage dump.
 		SilenceUsage: true,
 	}
-	root.AddCommand(newReposCmd(), newRunCmd())
+	root.AddCommand(newSelectCmd())
 	return root
 }

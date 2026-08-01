@@ -12,7 +12,7 @@ func TestValidateToken(t *testing.T) {
 
 	err := validateToken("")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "GITHUB_TOKEN")
+	assert.Contains(t, err.Error(), tokenEnvVar)
 }
 
 func TestValidateTargeting(t *testing.T) {
@@ -56,43 +56,4 @@ func TestValidateTargeting(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
-}
-
-func TestValidateRun(t *testing.T) {
-	ok := runValidation{
-		branch:        "bump",
-		commitMessage: "bump image",
-		prTitle:       "Bump image",
-		script:        []string{"true"},
-	}
-	require.NoError(t, validateRun(ok))
-
-	tests := []struct {
-		name    string
-		mutate  func(*runValidation)
-		wantErr string
-	}{
-		{"missing branch", func(r *runValidation) { r.branch = "" }, "--branch is required"},
-		{"missing commit message", func(r *runValidation) { r.commitMessage = "" }, "--commit-message is required"},
-		{"missing pr title", func(r *runValidation) { r.prTitle = "" }, "--pr-title is required"},
-		{"missing script", func(r *runValidation) { r.script = nil }, "after --"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rv := ok
-			tt.mutate(&rv)
-			err := validateRun(rv)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.wantErr)
-		})
-	}
-}
-
-func TestValidateOutput(t *testing.T) {
-	require.NoError(t, validateOutput("table"))
-	require.NoError(t, validateOutput("json"))
-
-	err := validateOutput("yaml")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "table")
 }

@@ -2,14 +2,16 @@
 // It has no dependencies on other goldfinger packages.
 package models
 
-// Repo is a GitHub repository goldfinger can operate on.
+import "time"
+
+// Repo is a GitHub repository in a selection.
 type Repo struct {
-	Owner         string
-	Name          string
-	CloneURL      string // https
-	DefaultBranch string
-	Topics        []string
-	Archived      bool
+	Owner         string   `json:"owner"`
+	Name          string   `json:"name"`
+	CloneURL      string   `json:"cloneURL"`
+	DefaultBranch string   `json:"defaultBranch"`
+	Topics        []string `json:"topics,omitempty"`
+	Archived      bool     `json:"archived,omitempty"`
 }
 
 // FullName returns the canonical "owner/name" identifier.
@@ -17,34 +19,24 @@ func (r Repo) FullName() string {
 	return r.Owner + "/" + r.Name
 }
 
-// Status is the outcome of processing a single repo during a run.
-type Status string
-
-const (
-	StatusSuccess Status = "success"
-	StatusSkipped Status = "skipped"
-	StatusFailed  Status = "failed"
-)
-
-// RepoResult is the per-repo outcome of a run.
-type RepoResult struct {
-	Repo   Repo
-	Status Status
-	PRURL  string // set when Status is StatusSuccess
-	Err    error  // set when Status is StatusFailed
+// SelectionFilter records how a selection was resolved, for provenance.
+type SelectionFilter struct {
+	AllRepos bool     `json:"allRepos"`
+	Topics   []string `json:"topics,omitempty"`
 }
 
-// RunSpec carries everything the run engine needs. It is assembled in cmd/
-// from validated flags.
-type RunSpec struct {
-	Branch        string
-	CommitMessage string
-	PRTitle       string
-	PRBody        string
-	Labels        []string
-	Reviewers     []string // users or org/team slugs
-	Draft         bool
-	Script        []string
-	Concurrency   int
-	DryRun        bool
+// SelectionVersion is the current lockfile schema version.
+const SelectionVersion = 1
+
+// Selection is the frozen set of repos a run targets: the shared artifact that
+// both `mirror` (ghorg) and `apply` (multi-gitter) consume, so they operate on a
+// provably identical set.
+type Selection struct {
+	Version    int             `json:"version"`
+	Owner      string          `json:"owner"`
+	OwnerType  string          `json:"ownerType"` // "User" | "Organization"
+	Filter     SelectionFilter `json:"filter"`
+	ResolvedAt time.Time       `json:"resolvedAt"`
+	Tool       string          `json:"tool"`
+	Repos      []Repo          `json:"repos"`
 }
