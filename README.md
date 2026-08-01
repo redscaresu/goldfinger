@@ -138,6 +138,8 @@ so you only set this one. Run `goldfinger guide` for the operator playbook.
 - **Go** (to build goldfinger).
 - **ghorg** and **multi-gitter** on `PATH`. goldfinger checks for them and prints
   install instructions if missing.
+- A **git identity** (`git config user.name` / `user.email`) — multi-gitter
+  authors the `apply` commit from it.
 - **`GOLD_FINGER_PAT`** — a GitHub PAT. goldfinger uses it for API discovery and
   maps it to the env vars ghorg (`GHORG_GITHUB_TOKEN`) and multi-gitter
   (`GITHUB_TOKEN`) expect, so you set one token, not three.

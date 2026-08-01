@@ -14,6 +14,9 @@ PREREQUISITES
     ghorg (GHORG_GITHUB_TOKEN) and multi-gitter (GITHUB_TOKEN) expect, so you
     set one token, not three.
   - Install ghorg and multi-gitter and put them on PATH.
+  - Configure a git identity (git config user.name / user.email). multi-gitter
+    authors the apply commit from it; without it, apply silently makes no change
+    and opens no PR.
 
 WORKFLOW
   1. Select — resolve and freeze the repo set:

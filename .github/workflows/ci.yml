@@ -82,6 +82,12 @@ jobs:
           go install github.com/gabrie30/ghorg@v1.11.14
           go install github.com/lindell/multi-gitter@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Configure git identity
+        # multi-gitter authors the commit from git config; CI has none by default.
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          git config --global user.name "goldfinger-e2e[bot]"
+          git config --global user.email "goldfinger-e2e@users.noreply.github.com"
       - name: Run e2e
         if: steps.guard.outputs.run == 'true'
         env:
