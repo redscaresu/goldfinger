@@ -1,5 +1,7 @@
 # goldfinger
 
+[![CI](https://github.com/redscaresu/goldfinger/actions/workflows/ci.yml/badge.svg)](https://github.com/redscaresu/goldfinger/actions/workflows/ci.yml)
+
 An orchestration layer for fleet-wide GitHub work. goldfinger resolves a set of
 repos once — by org/user and topic — freezes it as a reviewable **selection**,
 then drives two best-in-class tools against that exact set:
@@ -12,6 +14,33 @@ then drives two best-in-class tools against that exact set:
 The value goldfinger adds is not mirroring or PR-fanout — those tools already do
 each well. It's that **"the repos I mirror" and "the repos I change" are provably
 the same set**, captured in one artifact you can inspect before anything runs.
+
+## It's a wrapper over ghorg and multi-gitter
+
+goldfinger does **not** clone repos or open PRs itself. It is a thin wrapper that
+shells out to two existing, mature CLI tools and coordinates them around one
+shared selection:
+
+| You run | goldfinger shells out to | which does the work |
+|---|---|---|
+| `goldfinger mirror` | `ghorg clone <owner> --target-repos-path=<names> --path=<ws>` | clone/pull the repos locally |
+| `goldfinger apply … -- <cmd>` | `multi-gitter run <script> --repo a/b --repo a/c …` | run the change + open PRs |
+
+Everything goldfinger *itself* does is the glue around those two calls:
+
+- **Resolve the selection** — one GitHub API pass turns `--org` / `--topic` into a
+  concrete `owner/name` list, frozen in a lockfile.
+- **Feed both tools the identical set** — ghorg via a `--target-repos-path` names
+  file, multi-gitter via repeated `--repo` flags. Neither tool re-discovers, so
+  the two phases can't drift apart.
+- **One token, one UX** — you set `GOLD_FINGER_PAT`; goldfinger maps it to the env
+  vars each tool expects (`GHORG_GITHUB_TOKEN`, `GITHUB_TOKEN`), checks both are
+  installed, and frames their output.
+
+So goldfinger is a few hundred lines of orchestration, not a reimplementation.
+Rebuilding ghorg or multi-gitter would at best match tools that are already fast
+(both Go, both shell out to `git`, both do bounded-concurrency clones) — the win
+is making them share one reviewable selection.
 
 ## Why this exists
 
@@ -42,6 +71,28 @@ the selection a single frozen artifact that feeds both phases.
            a local workspace)           the exact set)
 ```
 
+## Quickstart
+
+```sh
+export GOLD_FINGER_PAT=<PAT>   # one token; goldfinger maps it to ghorg + multi-gitter
+
+# 1. freeze the target set -> ./goldfinger.selection
+goldfinger select --org mycompany --topic platform
+
+# 2. clone/pull them locally to grep and inspect (optional)
+goldfinger mirror
+
+# 3. dry-run the change — shows the diff, opens nothing
+goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
+  -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
+
+# 4. for real — opens the PRs (requires both flags)
+goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
+  --dry-run=false --confirm -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
+```
+
+`goldfinger guide` prints this playbook from the binary itself.
+
 ### `goldfinger select`
 
 Resolves the repo set via the GitHub API and writes the selection lockfile.
@@ -56,8 +107,22 @@ goldfinger select --org mycompany --all-repos
 - `--all-repos` or `--topic <t>` (repeatable, any-match) — exactly one is
   required. Topic filtering is goldfinger's, applied here and frozen into the
   lockfile; ghorg's and multi-gitter's own topic flags are bypassed.
-- Writes `goldfinger.selection` (owner/name list plus provenance: owner, filters,
-  resolved-at, tool version) and prints the set for review.
+- Writes `goldfinger.selection` and prints the set for review. The lockfile is
+  plain JSON — inspect or diff it before mirroring/applying:
+
+```json
+{
+  "version": 1,
+  "owner": "mycompany",
+  "ownerType": "Organization",
+  "filter": { "topics": ["platform"] },
+  "resolvedAt": "2026-08-01T15:17:53Z",
+  "tool": "goldfinger v0.1.0",
+  "repos": [
+    { "owner": "mycompany", "name": "billing", "cloneURL": "https://github.com/mycompany/billing.git", "defaultBranch": "main", "topics": ["platform"] }
+  ]
+}
+```
 
 ### `goldfinger mirror`
 
@@ -83,23 +148,15 @@ goldfinger apply --branch bump-go-1.24 \
 ```
 
 Shells out to `multi-gitter run`, passing one `--repo owner/name` per lockfile
-entry plus the script and PR flags. Defaults to `--dry-run`; opening real PRs is
-an explicit, human-run step.
+entry plus the script and PR flags.
 
-## What goldfinger does and doesn't own
-
-| Concern | Owner |
-|---|---|
-| Resolving the repo set (org/user + topic) | **goldfinger** (GitHub API) |
-| The frozen, reviewable selection artifact | **goldfinger** |
-| One-token UX, dependency checks, wiring | **goldfinger** |
-| Cloning/pulling the mirror, keeping it fresh | ghorg |
-| Clone→script→commit→push→PR for the apply | multi-gitter |
-
-goldfinger deliberately does **not** reimplement mirroring or PR-fanout. ghorg
-and multi-gitter are mature and fast (both Go, both shell out to `git`, both do
-bounded-concurrency clones); rebuilding them would at best match them. goldfinger
-is the thin, opinionated glue that makes them share one selection.
+- The command after `--` runs in each repo's checkout. If it changes files and
+  exits 0, a PR is prepared.
+- PR options: `--base-branch <main|dev>` (base the PR on a branch other than the
+  default), `--pr-body`, `--label` / `--reviewer` (repeatable), `--draft`.
+- **Safety:** `apply` defaults to `--dry-run` (shows the change, opens nothing). A
+  real run requires **both** `--dry-run=false` **and** `--confirm` — the guard
+  against an accidental fleet-wide PR blast. Opening real PRs is a human step.
 
 ## Install
 
@@ -151,6 +208,18 @@ operator playbook (the workflow, the dry-run-by-default safety rule, examples)
 that travels with the binary. The selection lockfile is JSON, and every error
 names the next action — so an agent can self-orient and recover without this
 README. Contributor-agent rules live in `AGENTS.md` and `CLAUDE.md`.
+
+## Development
+
+```sh
+make check   # go vet + race tests (mirrors CI's test job)
+make e2e     # full-pipeline test against a sandbox repo (needs GOLD_FINGER_PAT + gh)
+make hooks   # install the gitleaks pre-commit hook
+```
+
+CI runs the unit tests, gitleaks, govulncheck, and an end-to-end job that opens
+and tears down a real PR on a sandbox repo. Contributor rules are in `AGENTS.md`
+and `CLAUDE.md`.
 
 ## Design docs
 
