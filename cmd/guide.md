@@ -33,8 +33,12 @@ WORKFLOW
   3. Apply — run a change across the selection and open PRs:
        goldfinger apply --branch bump --commit-message "msg" --pr-title "title" \
          -- sed -i 's|old|new|g' Dockerfile
-     The command after -- runs in each repo's checkout (via multi-gitter). If it
-     changes files and exits 0, a PR is prepared.
+     The command after -- runs in each repo's checkout (via multi-gitter), on
+     your machine — keep it portable (`sed -i` differs on macOS/BSD). For
+     non-trivial or per-file edits, pass a script: `-- python3 /abs/migrate.py`.
+     If it changes files and exits 0, a PR is prepared.
+     With --base-branch omitted, each PR targets that repo's own default branch,
+     so a mixed dev/main selection routes correctly per repo.
 
 SAFETY — READ THIS
   - `apply` defaults to --dry-run: it shows the planned change and opens NOTHING.
