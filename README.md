@@ -1,156 +1,123 @@
 # goldfinger
 
-A CLI for SREs to manage GitHub repositories at scale: discover repos across an
-org, clone them, apply a change to each one, and fan out pull requests — hundreds
-at a time — without hand-rolling GitHub GraphQL queries, clone loops, or PR
-scripts ever again.
+An orchestration layer for fleet-wide GitHub work. goldfinger resolves a set of
+repos once — by org/user and topic — freezes it as a reviewable **selection**,
+then drives two best-in-class tools against that exact set:
 
-## The problem
+- **[ghorg](https://github.com/gabrie30/ghorg)** to mirror the selection into a
+  persistent local workspace (clone/pull hundreds of repos, kept fresh).
+- **[multi-gitter](https://github.com/lindell/multi-gitter)** to apply a change
+  across the selection and open PRs.
 
-Fleet-wide changes (bumping a Docker base image, rotating a CI config, patching a
-vulnerable dependency) currently mean stitching together the GitHub GraphQL API
-for search, the REST API for PRs, and shell scripts for clone/commit/push. Every
-SRE reinvents this pipeline, it's slow to write, easy to get wrong, and painful
-to retry when 12 of 300 repos fail halfway through.
+The value goldfinger adds is not mirroring or PR-fanout — those tools already do
+each well. It's that **"the repos I mirror" and "the repos I change" are provably
+the same set**, captured in one artifact you can inspect before anything runs.
 
-`goldfinger` replaces that with one tool:
+## Why this exists
+
+Fleet changes (bump a base image, patch a dependency, rotate a CI config) have
+two phases that are usually done with different, disconnected tooling:
+
+1. **Get the repos locally** so you can grep, open them in an editor, and figure
+   out *what* needs changing and *where*. (People hand-roll clone loops, or use
+   ghorg.)
+2. **Apply the change and open PRs.** (People hand-roll scripts, or use
+   multi-gitter.)
+
+The gap: the set you *explored* in phase 1 and the set you *changed* in phase 2
+are computed separately and drift apart — different filters, different moments in
+time, a repo added or retopic'd in between. goldfinger closes that gap by making
+the selection a single frozen artifact that feeds both phases.
+
+## The model
+
+```
+                 ┌──────────────────────────────┐
+   select  ───▶  │  goldfinger.selection  (lock) │  owner/name list + provenance
+                 └──────────────────────────────┘
+                        │                    │
+             mirror ────┘                    └──── apply
+          (ghorg clone/pull            (multi-gitter run:
+           the exact set into           script + PR across
+           a local workspace)           the exact set)
+```
+
+### `goldfinger select`
+
+Resolves the repo set via the GitHub API and writes the selection lockfile.
 
 ```sh
-# Bump a Docker image across every repo in the org that uses it
-goldfinger run \
-  --org mycompany \
-  --branch bump-golang-1.24 \
+goldfinger select --org mycompany --topic platform --topic payments
+# or every non-archived repo:
+goldfinger select --org mycompany --all-repos
+```
+
+- `--org <owner>` — a GitHub org **or** user (required).
+- `--all-repos` or `--topic <t>` (repeatable, any-match) — exactly one is
+  required. Topic filtering is goldfinger's, applied here and frozen into the
+  lockfile; ghorg's and multi-gitter's own topic flags are bypassed.
+- Writes `goldfinger.selection` (owner/name list plus provenance: owner, filters,
+  resolved-at, tool version) and prints the set for review.
+
+### `goldfinger mirror`
+
+Reads the lockfile and mirrors exactly that set locally via ghorg.
+
+```sh
+goldfinger mirror
+```
+
+Shells out to `ghorg clone <owner> --target-repos-path=<names> --path=<workspace>`
+so ghorg clones/pulls only the selected repos into goldfinger's workspace. Re-run
+any time to refresh; ghorg pulls existing clones instead of re-cloning.
+
+### `goldfinger apply`
+
+Reads the lockfile and runs a change across exactly that set via multi-gitter.
+
+```sh
+goldfinger apply --branch bump-go-1.24 \
   --commit-message "Bump golang base image to 1.24" \
   --pr-title "Bump golang base image to 1.24" \
   -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 ```
 
-For each matching repo, goldfinger clones it, runs your script in the working
-tree, and — if the script left the tree dirty — commits, pushes a branch, and
-opens a PR. Repos the script doesn't change are skipped automatically.
+Shells out to `multi-gitter run`, passing one `--repo owner/name` per lockfile
+entry plus the script and PR flags. Defaults to `--dry-run`; opening real PRs is
+an explicit, human-run step.
 
-It's fast because the heavy lifting happens over the git protocol — clone and
-push are unmetered and parallelize freely — while the rate-limited GitHub API
-is spent only on what git can't do: discovering repos and opening the PR.
-GraphQL-scripted workflows route everything through one metered point budget;
-goldfinger spends ~2–4 API calls per repo, total.
+## What goldfinger does and doesn't own
 
-## Is Go the right language? Yes.
+| Concern | Owner |
+|---|---|
+| Resolving the repo set (org/user + topic) | **goldfinger** (GitHub API) |
+| The frozen, reviewable selection artifact | **goldfinger** |
+| One-token UX, dependency checks, wiring | **goldfinger** |
+| Cloning/pulling the mirror, keeping it fresh | ghorg |
+| Clone→script→commit→push→PR for the apply | multi-gitter |
 
-- **Single static binary.** SREs install one artifact — no Python venvs, no Node
-  toolchain. Cross-compiles trivially for Linux/macOS/CI runners.
-- **Concurrency is the core workload.** Fanning out over hundreds of repos is
-  exactly what goroutines + `errgroup` + a semaphore are built for: bounded
-  parallelism with clean cancellation and per-repo error collection.
-- **First-class GitHub ecosystem.** `google/go-github` covers everything needed
-  (repo listing, PR creation, rate-limit headers); `gh` itself is written in Go.
-- **Prior art proves the model.** The closest existing tools —
-  [multi-gitter](https://github.com/lindell/multi-gitter),
-  [microplane](https://github.com/Clever/microplane), Sourcegraph batch changes —
-  are all Go. This is well-trodden ground. (Worth evaluating multi-gitter before
-  building: goldfinger's value over it is being tailored to our workflows, not
-  novelty.)
+goldfinger deliberately does **not** reimplement mirroring or PR-fanout. ghorg
+and multi-gitter are mature and fast (both Go, both shell out to `git`, both do
+bounded-concurrency clones); rebuilding them would at best match them. goldfinger
+is the thin, opinionated glue that makes them share one selection.
 
-## Design
+## Requirements
 
-### Interface
+- **Go** (to build goldfinger).
+- **ghorg** and **multi-gitter** on `PATH`. goldfinger checks for them and prints
+  install instructions if missing.
+- **`GOLD_FINGER_PAT`** — a GitHub PAT. goldfinger uses it for API discovery and
+  maps it to the env vars ghorg (`GHORG_GITHUB_TOKEN`) and multi-gitter
+  (`GITHUB_TOKEN`) expect, so you set one token, not three.
 
-A single CLI binary with subcommands. Runs locally or in CI.
+## Design docs
 
-```
-goldfinger repos    --org <org> [filters]        # discovery only: print matching repos
-goldfinger run      --org <org> [filters] -- CMD # clone → run CMD → commit → push → PR
-goldfinger status   --branch <name> --org <org>  # PR state across the fleet (open/merged/failed-ci)
-goldfinger merge    --branch <name> --org <org>  # merge all green PRs for a campaign branch
-goldfinger close    --branch <name> --org <org>  # abandon a campaign: close PRs, delete branches
-```
+- `IMPLEMENTATION.md` — the build plan: package layout, the selection format, the
+  ghorg/multi-gitter handoffs, build order, and pinned decisions.
 
-### Repo targeting: org-wide discovery
+## Non-goals (v0.1)
 
-Repos are discovered by enumerating the org via the REST API
-(`GET /orgs/{org}/repos`, paginated), then filtered client-side:
-
-- `--all-repos` — every non-archived repo in the org (explicit, never the default)
-- `--topic <t>` — repeatable; match repos carrying any of the given topics
-- Later: `--language`, `--contains-file`, `--repos-file` (explicit list, no discovery)
-
-Discovery output is a plain list of `owner/name`, so `goldfinger repos` pipes
-into `goldfinger run --repos-file -` for a review-then-execute workflow.
-
-### Change model: script per repo
-
-The change is an arbitrary command run inside each clone (the multi-gitter
-model). This keeps goldfinger a pure engine — clone/branch/commit/push/PR —
-while the transform itself is anything: `sed`, a Python script, `yq`, a compiled
-tool. Contract:
-
-- The command runs with CWD set to the repo's working tree.
-- Environment gets `GOLDFINGER_REPO=owner/name` plus pass-through of the parent env.
-- Exit non-zero → repo is marked **failed**, no commit is made.
-- Exit zero with a clean tree → repo is **skipped** (no PR noise).
-- Exit zero with a dirty tree → commit, push, PR.
-
-### Execution engine
-
-1. **Discover** matching repos (one paginated API pass).
-2. **Fan out** with bounded concurrency (default ~10 workers, `--concurrency`).
-   Each worker: shallow clone (`--depth 1`) into a temp dir → create branch →
-   run script → commit if dirty → push → open PR via API → clean up the clone.
-3. **Report** a per-repo result table: `success` (PR URL) / `skipped` / `failed`
-   (captured script stderr), plus a machine-readable `--output json` for CI.
-
-Git operations shell out to the system `git` binary rather than using go-git:
-the git CLI is faster, battle-tested on edge cases (LFS, submodules, credential
-helpers), and every target environment already has it. The GitHub API is only
-used where git can't go: discovery, PR create/status/merge.
-
-### Safety
-
-- `--dry-run` — do everything except push and open PRs; print the diff per repo.
-- `--interactive` — show each repo's diff and confirm before pushing.
-- `--max-repos N` — hard cap per run; forces an explicit flag to go org-wide.
-- Idempotent retries: if the campaign branch or PR already exists for a repo,
-  update it instead of failing, so re-running a partially failed campaign only
-  touches the stragglers.
-
-### Auth and rate limits
-
-- Auth via a PAT (classic or fine-grained) in `GITHUB_TOKEN` — never a flag, so
-  tokens don't leak into shell history. The same token is used for the API and
-  for git push (HTTPS with token credentials).
-- Respect GitHub's rate-limit headers: back off on `403`/`429` with
-  `Retry-After`, and honor secondary rate limits on PR creation (GitHub
-  throttles rapid content creation — this is the practical ceiling on
-  concurrency, not CPU).
-
-### Non-goals (for now)
-
-- No long-running service or state store — each run is stateless; `status`
-  recomputes from the GitHub API using the campaign branch name as the key.
-- No GitHub Enterprise Server support (github.com only) — but the API base URL
-  will be a single config point so GHES is a small later change.
-- No built-in transforms (e.g. a dedicated `bump-image` command). The script
-  model covers it; add sugar later if a pattern proves common (rule of three).
-
-## Proposed package layout
-
-Flat top-level packages, one responsibility each (per
-[simpleAPI](https://github.com/redscaresu/simpleAPI)), tests alongside the code:
-
-```
-cmd/        # main.go, CLI wiring (cobra)
-discovery/  # org enumeration + filters (go-github)
-campaign/   # the run engine: worker pool, per-repo pipeline
-gitexec/    # thin wrapper over the git CLI
-client/     # GitHub API: PR create/status/merge, rate-limit-aware
-models/     # shared domain types: Repo, Campaign, RepoResult
-```
-
-## Roadmap
-
-1. **MVP:** `repos` + `run` with dry-run, explicit repo list, PAT auth.
-2. **Campaign lifecycle:** `status`, `merge`, `close`, idempotent re-runs.
-3. **Richer discovery:** code-search-based targeting (find every repo whose
-   Dockerfile references image X) to fully retire the GraphQL workflows.
-4. **Later, if needed:** GitHub App auth for higher rate limits, GHES support,
-   built-in transforms.
+- No reimplementation of clone/pull or PR machinery (delegated by design).
+- github.com only; GHES is a later base-URL change.
+- No long-running service — the lockfile is the only persisted state, and
+  `mirror`/`apply` recompute nothing.
