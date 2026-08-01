@@ -156,7 +156,9 @@ entry plus the script and PR flags.
   default), `--pr-body`, `--label` / `--reviewer` (repeatable), `--draft`.
 - **Safety:** `apply` defaults to `--dry-run` (shows the change, opens nothing). A
   real run requires **both** `--dry-run=false` **and** `--confirm` — the guard
-  against an accidental fleet-wide PR blast. Opening real PRs is a human step.
+  against an accidental fleet-wide PR blast. A real run should always follow a
+  reviewed dry-run; when an agent runs it under explicit human authorization,
+  prefer `--draft`.
 
 ## Install
 
