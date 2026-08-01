@@ -82,6 +82,21 @@ func TestMirrorWritesRepoNames(t *testing.T) {
 	assert.Equal(t, "goldfinger\nsimpleAPI\n", gotNames)
 }
 
+func TestMirrorOverridesExistingToken(t *testing.T) {
+	t.Setenv(tokenEnv, "runner-default-token")
+	var cap capture
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "our-token", Options{}))
+
+	var vals []string
+	for _, e := range cap.env {
+		if strings.HasPrefix(e, tokenEnv+"=") {
+			vals = append(vals, e)
+		}
+	}
+	require.Len(t, vals, 1, "exactly one token entry should reach the child")
+	assert.Equal(t, tokenEnv+"=our-token", vals[0])
+}
+
 func TestMirrorOrgCloneType(t *testing.T) {
 	s := userSelection()
 	s.OwnerType = models.OwnerOrganization

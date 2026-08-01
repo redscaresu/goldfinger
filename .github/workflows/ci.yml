@@ -51,6 +51,44 @@ jobs:
       - name: Run govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  e2e:
+    # Full-pipeline test: select -> mirror -> apply (opens + tears down a real PR
+    # on the sandbox repo). Needs the GOLD_FINGER_PAT secret; skips cleanly (green)
+    # until it is set, and on fork PRs where secrets are unavailable.
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Guard on secret
+        id: guard
+        env:
+          PAT: ${{ secrets.GOLD_FINGER_PAT }}
+        run: |
+          if [ -z "$PAT" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GOLD_FINGER_PAT secret not set — skipping e2e. Add it in Settings > Secrets and variables > Actions to enable."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Setup Go
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install ghorg and multi-gitter
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          go install github.com/gabrie30/ghorg@v1.11.14
+          go install github.com/lindell/multi-gitter@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Run e2e
+        if: steps.guard.outputs.run == 'true'
+        env:
+          GOLD_FINGER_PAT: ${{ secrets.GOLD_FINGER_PAT }}
+          GH_TOKEN: ${{ secrets.GOLD_FINGER_PAT }} # for the gh CLI (verify + teardown)
+        run: make e2e
+
   build-binary:
     runs-on: ubuntu-latest
     needs: [test]

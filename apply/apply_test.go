@@ -51,9 +51,12 @@ func TestApplyInvocation(t *testing.T) {
 	spec.Labels = []string{"fleet", "chore"}
 	spec.Reviewers = []string{"redscaresu"}
 	spec.Draft = true
+	spec.BaseBranch = "dev"
 
 	err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "secret-token")
 	require.NoError(t, err)
+
+	assert.Contains(t, cap.args, "--base-branch=dev")
 
 	assert.Equal(t, "multi-gitter", cap.name)
 	assert.Equal(t, "run", cap.args[0])
@@ -129,6 +132,21 @@ func TestApplyTooManyRepos(t *testing.T) {
 	err := Apply(context.Background(), failRunner(t), s, baseSpec(), "t")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "limit")
+}
+
+func TestApplyOverridesExistingToken(t *testing.T) {
+	t.Setenv(tokenEnv, "runner-default-token") // e.g. CI's own GITHUB_TOKEN
+	var cap capture
+	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "our-token"))
+
+	var vals []string
+	for _, e := range cap.env {
+		if strings.HasPrefix(e, tokenEnv+"=") {
+			vals = append(vals, e)
+		}
+	}
+	require.Len(t, vals, 1, "exactly one token entry should reach the child")
+	assert.Equal(t, tokenEnv+"=our-token", vals[0])
 }
 
 func TestApplyPropagatesRunError(t *testing.T) {

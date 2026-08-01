@@ -14,6 +14,7 @@ func newApplyCmd() *cobra.Command {
 	var (
 		selectionPath string
 		branch        string
+		baseBranch    string
 		commitMessage string
 		prTitle       string
 		prBody        string
@@ -54,6 +55,7 @@ func newApplyCmd() *cobra.Command {
 			}
 			spec := models.ApplySpec{
 				Branch:        branch,
+				BaseBranch:    baseBranch,
 				CommitMessage: commitMessage,
 				PRTitle:       prTitle,
 				PRBody:        prBody,
@@ -69,6 +71,7 @@ func newApplyCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&selectionPath, "selection", defaultSelectionPath, "path to the selection lockfile")
 	f.StringVar(&branch, "branch", "", "branch to commit changes to (required)")
+	f.StringVar(&baseBranch, "base-branch", "", "base branch for the PR, e.g. main or dev (default: repo default branch)")
 	f.StringVar(&commitMessage, "commit-message", "", "commit message (required)")
 	f.StringVar(&prTitle, "pr-title", "", "pull request title (required)")
 	f.StringVar(&prBody, "pr-body", "", "pull request body")

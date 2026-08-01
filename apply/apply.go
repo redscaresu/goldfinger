@@ -42,7 +42,7 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	defer cleanup()
 
 	args := buildArgs(s, spec, scriptPath)
-	env := append(os.Environ(), tokenEnv+"="+token)
+	env := overrideEnv(os.Environ(), tokenEnv, token)
 	if err := run(ctx, "multi-gitter", args, env); err != nil {
 		return fmt.Errorf("multi-gitter run: %w", err)
 	}
@@ -60,6 +60,9 @@ func buildArgs(s models.Selection, spec models.ApplySpec, scriptPath string) []s
 		"--commit-message="+spec.CommitMessage,
 		"--pr-title="+spec.PRTitle,
 	)
+	if spec.BaseBranch != "" {
+		args = append(args, "--base-branch="+spec.BaseBranch)
+	}
 	if spec.PRBody != "" {
 		args = append(args, "--pr-body="+spec.PRBody)
 	}
@@ -110,4 +113,19 @@ func writeScript(cmd []string) (path string, cleanup func(), err error) {
 // shellQuote single-quotes a token so it survives POSIX sh word-splitting.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// overrideEnv returns base with any existing key= entries removed and key=val
+// appended, so the child sees exactly one deterministic value. Appending alone
+// is not enough: on Linux getenv returns the FIRST duplicate, so a value already
+// present (e.g. CI's own GITHUB_TOKEN) would win over ours.
+func overrideEnv(base []string, key, val string) []string {
+	out := make([]string, 0, len(base)+1)
+	prefix := key + "="
+	for _, e := range base {
+		if !strings.HasPrefix(e, prefix) {
+			out = append(out, e)
+		}
+	}
+	return append(out, key+"="+val)
 }

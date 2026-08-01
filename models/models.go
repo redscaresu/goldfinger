@@ -38,6 +38,7 @@ const SelectionVersion = 1
 // assembled in cmd/ from flags.
 type ApplySpec struct {
 	Branch        string
+	BaseBranch    string // base for the PR (e.g. "main" or "dev"); empty = repo default
 	CommitMessage string
 	PRTitle       string
 	PRBody        string

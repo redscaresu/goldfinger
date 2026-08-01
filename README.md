@@ -101,6 +101,38 @@ and multi-gitter are mature and fast (both Go, both shell out to `git`, both do
 bounded-concurrency clones); rebuilding them would at best match them. goldfinger
 is the thin, opinionated glue that makes them share one selection.
 
+## Install
+
+goldfinger itself:
+
+```sh
+# from source
+go install github.com/redscaresu/goldfinger/cmd@latest   # installs `goldfinger`
+# or build the repo
+git clone https://github.com/redscaresu/goldfinger && cd goldfinger && make build  # -> bin/goldfinger
+```
+
+Release builds for linux/darwin × amd64/arm64 are attached to each tagged
+release on GitHub.
+
+The two tools goldfinger drives (both Go, install with `go install`):
+
+```sh
+go install github.com/gabrie30/ghorg@latest
+go install github.com/lindell/multi-gitter@latest
+# ensure your GOPATH bin is on PATH, e.g.:
+export PATH="$PATH:$(go env GOPATH)/bin"
+```
+
+Then set your token once:
+
+```sh
+export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
+```
+
+goldfinger maps `GOLD_FINGER_PAT` to the env vars ghorg and multi-gitter expect,
+so you only set this one. Run `goldfinger guide` for the operator playbook.
+
 ## Requirements
 
 - **Go** (to build goldfinger).
