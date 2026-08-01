@@ -150,13 +150,23 @@ goldfinger apply --branch bump-go-1.24 \
 Shells out to `multi-gitter run`, passing one `--repo owner/name` per lockfile
 entry plus the script and PR flags.
 
-- The command after `--` runs in each repo's checkout. If it changes files and
-  exits 0, a PR is prepared.
-- PR options: `--base-branch <main|dev>` (base the PR on a branch other than the
-  default), `--pr-body`, `--label` / `--reviewer` (repeatable), `--draft`.
+- The command after `--` runs in each repo's checkout, **on your machine** — so
+  it must be portable to your OS. `sed -i 's|…|…|g'` is a GNU-ism that fails on
+  macOS (BSD `sed` needs `sed -i ''`). For anything non-trivial, or edits that
+  differ per file, pass a script instead of an inline command — e.g.
+  `-- python3 /abs/path/migrate.py` — which is portable and can carry per-file
+  logic a single `sed` can't.
+- **Base branch.** With `--base-branch` omitted, each PR targets that repo's
+  **own default branch** — so a mixed `dev`/`main` selection routes correctly
+  per repo with no extra flags. Pass `--base-branch <name>` to force one branch
+  across the whole set (note: it's a single global value — if some repos default
+  to `main` but you want `dev` there specifically, split the selection instead).
+- Other PR options: `--pr-body`, `--label` / `--reviewer` (repeatable), `--draft`.
 - **Safety:** `apply` defaults to `--dry-run` (shows the change, opens nothing). A
   real run requires **both** `--dry-run=false` **and** `--confirm` — the guard
-  against an accidental fleet-wide PR blast. Opening real PRs is a human step.
+  against an accidental fleet-wide PR blast. A real run should always follow a
+  reviewed dry-run; when an agent runs it under explicit human authorization,
+  prefer `--draft`.
 
 ## Install
 
@@ -185,6 +195,13 @@ Then set your token once:
 
 ```sh
 export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
+```
+
+No need to mint a new PAT if you already use the GitHub CLI — reuse that login
+(the token needs `repo` scope, which `gh auth login` grants by default):
+
+```sh
+export GOLD_FINGER_PAT="$(gh auth token)"
 ```
 
 goldfinger maps `GOLD_FINGER_PAT` to the env vars ghorg and multi-gitter expect,

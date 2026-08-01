@@ -33,14 +33,21 @@ WORKFLOW
   3. Apply — run a change across the selection and open PRs:
        goldfinger apply --branch bump --commit-message "msg" --pr-title "title" \
          -- sed -i 's|old|new|g' Dockerfile
-     The command after -- runs in each repo's checkout (via multi-gitter). If it
-     changes files and exits 0, a PR is prepared.
+     The command after -- runs in each repo's checkout (via multi-gitter), on
+     your machine — keep it portable (`sed -i` differs on macOS/BSD). For
+     non-trivial or per-file edits, pass a script: `-- python3 /abs/migrate.py`.
+     If it changes files and exits 0, a PR is prepared.
+     With --base-branch omitted, each PR targets that repo's own default branch,
+     so a mixed dev/main selection routes correctly per repo.
 
 SAFETY — READ THIS
   - `apply` defaults to --dry-run: it shows the planned change and opens NOTHING.
   - A real run needs BOTH --dry-run=false AND --confirm. This is deliberate.
-  - If you are an AI agent: do NOT run a real (non-dry-run) apply. Present the
-    dry-run result to the human and let them run the real apply themselves.
+  - If you are an AI agent: never run a real (non-dry-run) apply on your own
+    initiative. When the human has explicitly authorized this fleet change, you
+    may run it — but dry-run first, present the diff, prefer --draft (PRs open
+    not-ready-for-review), and pass --dry-run=false --confirm. Otherwise present
+    the dry-run result and let the human run the real apply themselves.
 
 NOTES FOR AI AGENTS
   - The selection lockfile is JSON — read it directly for structured state.
