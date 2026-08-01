@@ -34,6 +34,20 @@ type SelectionFilter struct {
 // SelectionVersion is the current lockfile schema version.
 const SelectionVersion = 1
 
+// ApplySpec is the change to run across a selection via multi-gitter. It is
+// assembled in cmd/ from flags.
+type ApplySpec struct {
+	Branch        string
+	CommitMessage string
+	PRTitle       string
+	PRBody        string
+	Labels        []string
+	Reviewers     []string
+	Draft         bool
+	DryRun        bool
+	Script        []string // the command to run in each repo, e.g. ["sed", "-i", ...]
+}
+
 // Selection is the frozen set of repos a run targets: the shared artifact that
 // both `mirror` (ghorg) and `apply` (multi-gitter) consume, so they operate on a
 // provably identical set.

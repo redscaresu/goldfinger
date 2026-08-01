@@ -218,9 +218,15 @@ keep them passing.
    multi-gitter with `--repo` list + script + `--dry-run`. Deliverable: a dry-run
    apply shows multi-gitter's planned change across the set. The real
    PR-opening run is **the human's** to execute and confirm.
-5. **Hardening** — token-redaction audit across both shell-outs, tool-presence
-   errors, lockfile schema-version handling, `--dry-run=false` confirmation
-   guard, README usage verified end-to-end.
+5. **Hardening + AI-facing docs** — token-redaction audit across both
+   shell-outs, tool-presence errors, lockfile schema-version handling,
+   `--dry-run=false` confirmation guard, README usage verified end-to-end. Plus,
+   because goldfinger is mostly AI-operated: a `goldfinger guide` command that
+   prints a `go:embed`ded operator playbook (select→mirror→apply, the
+   dry-run-by-default safety rule, copy-paste examples) — reachable at runtime by
+   any consuming agent, wherever it runs — and an `AGENTS.md` for contributor
+   agents (complements the repo `CLAUDE.md`). The JSON lockfile and
+   next-action error messages are already agent-legible; keep them so.
 
 Dependencies: `spf13/cobra`, `google/go-github/v89`, `stretchr/testify`. Plus two
 **runtime** CLI dependencies invoked via `exec`: **ghorg** and **multi-gitter**

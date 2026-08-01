@@ -27,3 +27,28 @@ func validateTargeting(t targeting) error {
 	}
 	return nil
 }
+
+// applyValidation is the subset of `apply` flags whose presence is mandatory.
+type applyValidation struct {
+	branch        string
+	commitMessage string
+	prTitle       string
+	script        []string
+}
+
+// validateApply enforces the flags required to run a change via multi-gitter.
+func validateApply(av applyValidation) error {
+	if av.branch == "" {
+		return errors.New("--branch is required")
+	}
+	if av.commitMessage == "" {
+		return errors.New("--commit-message is required")
+	}
+	if av.prTitle == "" {
+		return errors.New("--pr-title is required")
+	}
+	if len(av.script) == 0 {
+		return errors.New("a script command is required after --")
+	}
+	return nil
+}
