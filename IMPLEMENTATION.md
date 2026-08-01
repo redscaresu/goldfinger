@@ -8,8 +8,11 @@ You are implementing this plan from scratch. Everything you need is in this repo
    an **orchestration layer**: it resolves a repo selection, then delegates
    mirroring to **ghorg** and change-application to **multi-gitter**. It does not
    reimplement either.
-2. This file is the *what and how*. Where it and the README differ on detail,
-   this file wins.
+2. This file is the *what and how*. **v0.1 is now shipped and CI-green**, so the
+   code is the source of truth where a sketch here has drifted (e.g. the `Runner`
+   exec seam, `ApplySpec.BaseBranch`); read this for the plan and rationale, the
+   code for exact signatures. For the reader-facing "it's a wrapper over ghorg +
+   multi-gitter" overview, see `README.md`.
 3. Work the **Build order** steps in sequence. One step = one commit (or a few
    small ones); make each step's acceptance criteria pass before the next.
 4. Things only the human can provide — stop and ask, don't work around:
