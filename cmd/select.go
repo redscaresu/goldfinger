@@ -56,6 +56,7 @@ func newSelectCmd() *cobra.Command {
 // runSelect resolves the target repos, filters them, and writes the selection
 // lockfile. It is the testable core of the select command.
 func runSelect(ctx context.Context, r repoResolver, t targeting, selectionPath, tool string, out, errOut io.Writer) error {
+	banner(errOut, "Resolving selection for "+t.org)
 	if _, err := r.Verify(ctx); err != nil {
 		return fmt.Errorf("verifying token: %w", err)
 	}
@@ -81,6 +82,6 @@ func runSelect(ctx context.Context, r repoResolver, t targeting, selectionPath, 
 	for _, repo := range selected {
 		fmt.Fprintln(out, repo.FullName())
 	}
-	fmt.Fprintf(errOut, "\n%d repo(s) written to %s\n", len(selected), selectionPath)
+	done(errOut, fmt.Sprintf("%d repo(s) written to %s", len(selected), selectionPath))
 	return nil
 }

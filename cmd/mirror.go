@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/redscaresu/goldfinger/mirror"
+	"github.com/redscaresu/goldfinger/models"
 	"github.com/redscaresu/goldfinger/selection"
 	"github.com/spf13/cobra"
 )
@@ -37,12 +40,11 @@ func newMirrorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return mirror.Mirror(cmd.Context(), execRun, sel, token, mirror.Options{
-				Workspace:   ws,
+			return runMirror(cmd.Context(), execRun, sel, ws, token, mirror.Options{
 				Concurrency: concurrency,
 				CloneDepth:  cloneDepth,
 				DryRun:      dryRun,
-			})
+			}, cmd.ErrOrStderr())
 		},
 	}
 	f := cmd.Flags()
@@ -52,6 +54,19 @@ func newMirrorCmd() *cobra.Command {
 	f.IntVar(&cloneDepth, "clone-depth", 0, "shallow clone depth (0 = full history)")
 	f.BoolVar(&dryRun, "dry-run", false, "show what ghorg would clone without cloning")
 	return cmd
+}
+
+// runMirror frames the mirror phase and delegates to the mirror package. It is
+// the testable core of the mirror command (the Runner seam lets tests exercise
+// it without ghorg installed).
+func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws, token string, opts mirror.Options, errOut io.Writer) error {
+	opts.Workspace = ws
+	banner(errOut, fmt.Sprintf("Mirroring %d repo(s) into %s", len(sel.Repos), ws))
+	if err := mirror.Mirror(ctx, run, sel, token, opts); err != nil {
+		return err
+	}
+	done(errOut, fmt.Sprintf("mirror complete → %s/%s", ws, sel.Owner))
+	return nil
 }
 
 // resolveWorkspace returns an absolute workspace directory, defaulting to

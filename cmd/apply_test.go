@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/redscaresu/goldfinger/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,6 +39,39 @@ func TestValidateApply(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
+}
+
+func TestRunApply(t *testing.T) {
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a"}}}
+	spec := models.ApplySpec{Branch: "b", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true}
+
+	t.Run("dry-run frames and delegates", func(t *testing.T) {
+		var gotArgs []string
+		run := func(_ context.Context, _ string, args, _ []string) error { gotArgs = args; return nil }
+		var errOut bytes.Buffer
+		err := runApply(context.Background(), run, sel, spec, "tok", &errOut)
+		require.NoError(t, err)
+		assert.Contains(t, errOut.String(), "Applying to 1 repo(s)")
+		assert.Contains(t, errOut.String(), "dry-run")
+		assert.Contains(t, errOut.String(), "apply complete")
+		assert.Contains(t, gotArgs, "--dry-run")
+	})
+
+	t.Run("live mode banner", func(t *testing.T) {
+		live := spec
+		live.DryRun = false
+		var errOut bytes.Buffer
+		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+		require.NoError(t, runApply(context.Background(), run, sel, live, "tok", &errOut))
+		assert.Contains(t, errOut.String(), "LIVE")
+	})
+
+	t.Run("propagates delegate error", func(t *testing.T) {
+		run := func(_ context.Context, _ string, _, _ []string) error { return errors.New("mg blew up") }
+		err := runApply(context.Background(), run, sel, spec, "tok", &bytes.Buffer{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mg blew up")
+	})
 }
 
 // The apply command's guard paths all return before any tool/network use, so

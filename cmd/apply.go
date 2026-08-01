@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 
 	"github.com/redscaresu/goldfinger/apply"
@@ -65,7 +68,7 @@ func newApplyCmd() *cobra.Command {
 				DryRun:        dryRun,
 				Script:        script,
 			}
-			return apply.Apply(cmd.Context(), execRun, sel, spec, token)
+			return runApply(cmd.Context(), execRun, sel, spec, token, cmd.ErrOrStderr())
 		},
 	}
 	f := cmd.Flags()
@@ -81,6 +84,25 @@ func newApplyCmd() *cobra.Command {
 	f.BoolVar(&dryRun, "dry-run", true, "run without pushing or opening PRs (default; pass --dry-run=false for a real run)")
 	f.BoolVar(&confirm, "confirm", false, "required alongside --dry-run=false to actually open PRs")
 	return cmd
+}
+
+// runApply frames the apply phase and delegates to the apply package. It is the
+// testable core of the apply command.
+func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec models.ApplySpec, token string, errOut io.Writer) error {
+	mode := "LIVE — opening PRs"
+	if spec.DryRun {
+		mode = "dry-run — no push, no PRs"
+	}
+	base := spec.BaseBranch
+	if base == "" {
+		base = "repo default"
+	}
+	banner(errOut, fmt.Sprintf("Applying to %d repo(s) [%s] onto base %s", len(sel.Repos), mode, base))
+	if err := apply.Apply(ctx, run, sel, spec, token); err != nil {
+		return err
+	}
+	done(errOut, "apply complete")
+	return nil
 }
 
 // scriptArgs returns the command supplied after the `--` separator, or nil if
