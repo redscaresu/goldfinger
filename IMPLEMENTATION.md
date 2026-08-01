@@ -202,8 +202,12 @@ keep them passing.
 
 ## Build order
 
+**v0.1 status: all steps complete and CI-green.** select/mirror/apply verified
+live against the `redscaresu` account (real clone; dry-run apply). The real
+PR-opening apply remains the human's to run.
+
 1. **Skeleton + CI/CD** — module, `models`, cobra skeleton, all CI/CD machinery.
-   **[DONE, CI green.]** (Command names predate the pivot; step 2 renames them.)
+   **[DONE, CI green.]**
 2. **select** — wire `client` + `discovery` + `selection` into
    `goldfinger select`: resolve via API, write the lockfile, print the set.
    `client` and `discovery` are already built and tested; add `selection`
@@ -214,6 +218,7 @@ keep them passing.
    exec ghorg into the workspace. Confirm the exact ghorg invocation (org vs
    user, flags) against real ghorg. Deliverable: `goldfinger mirror` clones the
    selected repos locally. Read-only w.r.t. GitHub, safe to run.
+[DONE, CI green.]
 4. **apply (dry-run first)** — `apply` package + command: read lockfile → exec
    multi-gitter with `--repo` list + script + `--dry-run`. Deliverable: a dry-run
    apply shows multi-gitter's planned change across the set. The real

@@ -110,6 +110,14 @@ is the thin, opinionated glue that makes them share one selection.
   maps it to the env vars ghorg (`GHORG_GITHUB_TOKEN`) and multi-gitter
   (`GITHUB_TOKEN`) expect, so you set one token, not three.
 
+## For AI agents
+
+goldfinger is mostly operated by AI agents. `goldfinger guide` prints a compact
+operator playbook (the workflow, the dry-run-by-default safety rule, examples)
+that travels with the binary. The selection lockfile is JSON, and every error
+names the next action — so an agent can self-orient and recover without this
+README. Contributor-agent rules live in `AGENTS.md` and `CLAUDE.md`.
+
 ## Design docs
 
 - `IMPLEMENTATION.md` — the build plan: package layout, the selection format, the
