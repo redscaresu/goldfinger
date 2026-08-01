@@ -22,6 +22,7 @@ func newApplyCmd() *cobra.Command {
 		commitMessage string
 		prTitle       string
 		prBody        string
+		prBodyFile    string
 		labels        []string
 		reviewers     []string
 		draft         bool
@@ -45,6 +46,14 @@ func newApplyCmd() *cobra.Command {
 			}); err != nil {
 				return err
 			}
+			// A long PR body is easier to supply from a file than a shell-quoted
+			// flag; --pr-body-file loads it. The two body sources are mutually
+			// exclusive so there's no ambiguity about which one wins.
+			body, err := resolvePRBody(prBody, prBodyFile)
+			if err != nil {
+				return err
+			}
+			prBody = body
 			// Safety guard: a real run opens PRs. Require an explicit --confirm
 			// so it can never happen by omitting a flag.
 			if !dryRun && !confirm {
@@ -82,7 +91,8 @@ func newApplyCmd() *cobra.Command {
 	f.StringVar(&baseBranch, "base-branch", "", "base branch for the PR, e.g. main or dev (default: repo default branch)")
 	f.StringVar(&commitMessage, "commit-message", "", "commit message (required)")
 	f.StringVar(&prTitle, "pr-title", "", "pull request title (required)")
-	f.StringVar(&prBody, "pr-body", "", "pull request body")
+	f.StringVar(&prBody, "pr-body", "", "pull request body (mutually exclusive with --pr-body-file)")
+	f.StringVar(&prBodyFile, "pr-body-file", "", "read the pull request body from a file (mutually exclusive with --pr-body)")
 	f.StringArrayVar(&labels, "label", nil, "label to add to every PR (repeatable)")
 	f.StringArrayVar(&reviewers, "reviewer", nil, "reviewer to request: user or org/team (repeatable)")
 	f.BoolVar(&draft, "draft", false, "open PRs as drafts")
@@ -98,16 +108,53 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 	if spec.DryRun {
 		mode = "dry-run — no push, no PRs"
 	}
-	base := spec.BaseBranch
-	if base == "" {
-		base = "repo default"
+	baseLabel := spec.BaseBranch
+	if baseLabel == "" {
+		baseLabel = "each repo's default branch"
 	}
-	banner(errOut, fmt.Sprintf("Applying to %d repo(s) [%s] onto base %s", len(sel.Repos), mode, base))
+	banner(errOut, fmt.Sprintf("Applying to %d repo(s) [%s] onto base %s", len(sel.Repos), mode, baseLabel))
+	// Spell out the resolved base per repo so the routing is auditable before
+	// anything runs — this is exactly what a mixed dev/main selection needs to
+	// confirm each PR lands on the right branch.
+	for _, r := range sel.Repos {
+		fmt.Fprintf(errOut, "  %s -> %s\n", r.FullName(), resolveBase(spec.BaseBranch, r))
+	}
 	if err := apply.Apply(ctx, run, sel, spec, token); err != nil {
 		return err
 	}
 	done(errOut, "apply complete")
 	return nil
+}
+
+// resolvePRBody picks the PR body from either the inline --pr-body or the
+// --pr-body-file path. Supplying both is an error; supplying neither yields an
+// empty body.
+func resolvePRBody(inline, path string) (string, error) {
+	if path == "" {
+		return inline, nil
+	}
+	if inline != "" {
+		return "", errors.New("--pr-body and --pr-body-file are mutually exclusive")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading --pr-body-file: %w", err)
+	}
+	return string(b), nil
+}
+
+// resolveBase reports the branch a repo's PR will target: an explicit global
+// --base-branch wins; otherwise multi-gitter uses the repo's own default
+// branch. Falls back to a readable label when the lockfile lacks the default
+// (e.g. an older selection or a hand-written one).
+func resolveBase(globalBase string, r models.Repo) string {
+	if globalBase != "" {
+		return globalBase
+	}
+	if r.DefaultBranch != "" {
+		return r.DefaultBranch
+	}
+	return "repo default"
 }
 
 // scriptArgs returns the command supplied after the `--` separator, or nil if

@@ -167,7 +167,9 @@ entry plus the script and PR flags.
   per repo with no extra flags. Pass `--base-branch <name>` to force one branch
   across the whole set (note: it's a single global value — if some repos default
   to `main` but you want `dev` there specifically, split the selection instead).
-- Other PR options: `--pr-body`, `--label` / `--reviewer` (repeatable), `--draft`.
+- Other PR options: `--pr-body` (or `--pr-body-file <path>` to load a long body
+  from a file — the two are mutually exclusive), `--label` / `--reviewer`
+  (repeatable), `--draft`.
 - **Safety:** `apply` defaults to `--dry-run` (shows the change, opens nothing). A
   real run requires **both** `--dry-run=false` **and** `--confirm` — the guard
   against an accidental fleet-wide PR blast. A real run should always follow a
