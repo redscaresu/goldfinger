@@ -22,4 +22,5 @@ rate limits.
   go-github, errgroup, x/time/rate, testify. Adding anything else requires
   asking first.
 - `go build ./...`, `go vet ./...`, `go test ./...` all clean before every
-  commit.
+  commit. `make check` mirrors CI's test job exactly — if it passes locally,
+  CI should be green.

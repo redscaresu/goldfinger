@@ -238,12 +238,46 @@ each path yields the right `Status`, and that skipped repos open no PR.
   API-created commits are content mutations, so they'd queue behind the 1/sec
   throttle — that path is *slower* than local signing, not faster.
 
+## CI/CD
+
+Follow the family conventions from the sibling repos (infrafactory, fakeaws) —
+same shapes, minus their UI/Node machinery since goldfinger is pure Go. Landed
+in build-order step 1 together with `go.mod`, so every later step runs under CI.
+
+**`.github/workflows/ci.yml`** — on `pull_request` and push to `main`:
+
+- `test` job: `actions/checkout@v4`, `actions/setup-go@v5` with
+  `go-version-file: go.mod`, then `go vet ./...` and
+  `go test -race -count=2 ./...` (the family standard: `-race` because the
+  campaign engine is concurrency-heavy, `-count=2` to surface parallel-subtest
+  filesystem races that only flake in CI).
+- `gitleaks` job: pinned gitleaks release, `detect --redact`, with a minimal
+  `.gitleaks.toml`. Extra load-bearing in this repo — the tool's whole job is
+  handling a PAT, and this backs the token-redaction contract at the repo level.
+- `build-binary` job (push to `main` only, `needs: [test]`): matrix
+  linux/amd64 + linux/arm64, `CGO_ENABLED=0 go build -trimpath`, upload as
+  artifacts.
+
+**`.github/workflows/release.yml`** — on `v*` tags: matrix linux/darwin ×
+amd64/arm64, `-ldflags "-s -w -X main.version=${GITHUB_REF_NAME}"`, sha256
+sidecars, attach to a GitHub release via `softprops/action-gh-release@v2`.
+Requires `var version = "dev"` in `cmd/` wired to cobra's `Version` so
+`goldfinger --version` reports it. (Homebrew tap / goreleaser / Docker images:
+v0.2 if distribution demands it — the raw-binary release matches the family
+baseline and is enough for SRE laptops and CI runners.)
+
+**`Makefile`** — thin, mirroring what CI runs so local and CI can't drift:
+`make test` (vet + race tests exactly as CI), `make build` (bin/goldfinger),
+`make check` (build + test), `make help`. No other targets until needed.
+
 ## Build order
 
 Each step compiles, is tested, and is independently reviewable:
 
 1. **Skeleton** — `go mod init github.com/redscaresu/goldfinger`, cobra root
-   command, `models`, token/flag validation. Deliverable: `goldfinger --help`.
+   command, `models`, token/flag validation, **plus the CI/CD machinery above**
+   (ci.yml, release.yml, .gitleaks.toml, Makefile) so CI is green from the
+   first code push. Deliverable: `goldfinger --help` and a green Actions run.
 2. **client + discovery + `repos`** — list and filter org repos. Deliverable:
    `goldfinger repos --org X --topic platform` prints real repos. First point of
    end-to-end validation against the live API.
@@ -296,7 +330,8 @@ builder would otherwise have to guess, and set the guardrails.
 1. `go build ./...` clean; `goldfinger --help` and both subcommands' `--help`
    render; missing `GITHUB_TOKEN` / missing `--org` / both-or-neither of
    `--all-repos`/`--topic` each produce a one-line actionable error. Unit tests
-   for flag validation pass.
+   for flag validation pass. CI (test + gitleaks jobs) green on the pushed
+   commit; `make check` runs the same commands as CI's test job.
 2. `goldfinger repos --org <org> --topic x` prints `owner/name` lines against
    the live API. Pagination proven by an `httptest` test serving 3 pages;
    topic/archived filtering covered by table tests.
