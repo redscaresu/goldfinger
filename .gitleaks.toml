@@ -1,0 +1,10 @@
+# Keep gitleaks' full default ruleset and add a narrow allowlist.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Repo-wide allowlist"
+# go.sum is module content hashes — high entropy but not secrets.
+paths = [
+  '''go\.sum$''',
+]

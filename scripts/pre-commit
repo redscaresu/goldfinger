@@ -1,0 +1,9 @@
+#!/bin/sh
+# goldfinger pre-commit hook: scan staged changes for secrets.
+# Install with `make hooks`. Bypassable with --no-verify; the CI gitleaks
+# job is the load-bearing backstop.
+set -e
+
+echo "Scanning for secrets (gitleaks)..."
+gitleaks protect --staged --no-banner
+echo "No secrets detected."

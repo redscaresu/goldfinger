@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Grouped into one PR per ecosystem to avoid noise. Auto-merge is
+  # deliberately off — every bump gets a human review pass, especially
+  # given this tool holds org-wide write credentials.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      go-deps:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns:
+          - "*"
