@@ -18,6 +18,6 @@ func newRootCmd() *cobra.Command {
 		// under a full usage dump.
 		SilenceUsage: true,
 	}
-	root.AddCommand(newSelectCmd(), newMirrorCmd(), newApplyCmd(), newGuideCmd())
+	root.AddCommand(newSelectCmd(), newMirrorCmd(), newApplyCmd(), newSelectionsCmd(), newGuideCmd())
 	return root
 }

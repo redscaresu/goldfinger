@@ -16,6 +16,7 @@ import (
 func newMirrorCmd() *cobra.Command {
 	var (
 		selectionPath string
+		name          string
 		workspace     string
 		concurrency   int
 		cloneDepth    int
@@ -32,7 +33,11 @@ func newMirrorCmd() *cobra.Command {
 			if err := requireTool("ghorg", "https://github.com/gabrie30/ghorg#installation"); err != nil {
 				return err
 			}
-			sel, err := selection.Read(selectionPath)
+			path, err := resolveSelectionPath(name, selectionPath)
+			if err != nil {
+				return err
+			}
+			sel, err := selection.Read(path)
 			if err != nil {
 				return err
 			}
@@ -47,8 +52,8 @@ func newMirrorCmd() *cobra.Command {
 			}, cmd.ErrOrStderr())
 		},
 	}
+	addSelectionFlags(cmd, &name, &selectionPath)
 	f := cmd.Flags()
-	f.StringVar(&selectionPath, "selection", defaultSelectionPath, "path to the selection lockfile")
 	f.StringVar(&workspace, "workspace", "", "absolute workspace dir (default ~/goldfinger; repos land in <workspace>/<owner>)")
 	f.IntVar(&concurrency, "concurrency", 0, "concurrent clones (0 = ghorg default)")
 	f.IntVar(&cloneDepth, "clone-depth", 0, "shallow clone depth (0 = full history)")

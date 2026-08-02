@@ -168,6 +168,24 @@ entry plus the script and PR flags.
   reviewed dry-run; when an agent runs it under explicit human authorization,
   prefer `--draft`.
 
+### Named selections
+
+By default a selection lives in `./goldfinger.selection`. To keep several
+standing cohorts, give each a **name** — stored in a registry
+(`~/.config/goldfinger/selections/<name>.json`) and referred to by `--name` on
+any command:
+
+```sh
+goldfinger select --name platform --org acme --topic platform   # define / refresh
+goldfinger select --name payments --org acme --topic payments
+goldfinger selections                                           # list them
+goldfinger mirror --name platform                               # operate by name
+goldfinger apply  --name payments -- sed -i '…' Dockerfile
+```
+
+`--name` and `--selection <path>` are mutually exclusive; re-running
+`select --name X` refreshes that cohort in place.
+
 ## Install
 
 goldfinger itself:

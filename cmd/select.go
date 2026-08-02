@@ -29,6 +29,7 @@ func newSelectCmd() *cobra.Command {
 	var (
 		t             targeting
 		selectionPath string
+		name          string
 	)
 	cmd := &cobra.Command{
 		Use:   "select",
@@ -41,15 +42,19 @@ func newSelectCmd() *cobra.Command {
 			if err := validateTargeting(t); err != nil {
 				return err
 			}
+			path, err := resolveSelectionPath(name, selectionPath)
+			if err != nil {
+				return err
+			}
 			c, err := client.New(token)
 			if err != nil {
 				return err
 			}
-			return runSelect(cmd.Context(), c, t, selectionPath, "goldfinger "+version, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runSelect(cmd.Context(), c, t, path, "goldfinger "+version, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	addTargetingFlags(cmd, &t)
-	cmd.Flags().StringVar(&selectionPath, "selection", defaultSelectionPath, "path to write the selection lockfile")
+	addSelectionFlags(cmd, &name, &selectionPath)
 	return cmd
 }
 

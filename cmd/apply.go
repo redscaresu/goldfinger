@@ -16,6 +16,7 @@ import (
 func newApplyCmd() *cobra.Command {
 	var (
 		selectionPath string
+		name          string
 		branch        string
 		baseBranch    string
 		commitMessage string
@@ -52,7 +53,11 @@ func newApplyCmd() *cobra.Command {
 			if err := requireTool("multi-gitter", "https://github.com/lindell/multi-gitter#installation"); err != nil {
 				return err
 			}
-			sel, err := selection.Read(selectionPath)
+			path, err := resolveSelectionPath(name, selectionPath)
+			if err != nil {
+				return err
+			}
+			sel, err := selection.Read(path)
 			if err != nil {
 				return err
 			}
@@ -71,8 +76,8 @@ func newApplyCmd() *cobra.Command {
 			return runApply(cmd.Context(), execRun, sel, spec, token, cmd.ErrOrStderr())
 		},
 	}
+	addSelectionFlags(cmd, &name, &selectionPath)
 	f := cmd.Flags()
-	f.StringVar(&selectionPath, "selection", defaultSelectionPath, "path to the selection lockfile")
 	f.StringVar(&branch, "branch", "", "branch to commit changes to (required)")
 	f.StringVar(&baseBranch, "base-branch", "", "base branch for the PR, e.g. main or dev (default: repo default branch)")
 	f.StringVar(&commitMessage, "commit-message", "", "commit message (required)")

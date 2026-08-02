@@ -52,6 +52,51 @@ func TestReadUnsupportedVersion(t *testing.T) {
 	assert.Contains(t, err.Error(), "version")
 }
 
+func TestNamedSelectionRegistry(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	// Empty registry: no names, no error.
+	names, err := Names()
+	require.NoError(t, err)
+	assert.Empty(t, names)
+
+	// Write two named selections via their registry paths.
+	for _, n := range []string{"payments", "platform"} {
+		p, err := PathForName(n)
+		require.NoError(t, err)
+		sel := sampleSelection()
+		sel.Owner = n
+		require.NoError(t, Write(p, sel)) // Write creates the registry dir
+	}
+
+	names, err = Names()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"payments", "platform"}, names, "names are sorted")
+
+	// Round-trip a named selection by name.
+	p, err := PathForName("payments")
+	require.NoError(t, err)
+	got, err := Read(p)
+	require.NoError(t, err)
+	assert.Equal(t, "payments", got.Owner)
+}
+
+func TestDirHonoursXDG(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
+	dir, err := Dir()
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/xdg/goldfinger/selections", dir)
+}
+
+func TestDirFallsBackToHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	dir, err := Dir()
+	require.NoError(t, err)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".config", "goldfinger", "selections"), dir)
+}
+
 func TestReadCorruptJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "goldfinger.selection")
 	require.NoError(t, os.WriteFile(path, []byte(`not json`), 0o644))

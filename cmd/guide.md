@@ -40,6 +40,13 @@ WORKFLOW
      With --base-branch omitted, each PR targets that repo's own default branch,
      so a mixed dev/main selection routes correctly per repo.
 
+NAMED SELECTIONS
+  By default a selection is ./goldfinger.selection. To keep several standing
+  cohorts, name them: `select --name platform ...` stores it in a registry
+  (~/.config/goldfinger/selections/<name>.json). Then `mirror --name platform`
+  or `apply --name platform ...`. `goldfinger selections` lists them. --name and
+  --selection are mutually exclusive.
+
 SAFETY — READ THIS
   - `apply` defaults to --dry-run: it shows the planned change and opens NOTHING.
   - A real run needs BOTH --dry-run=false AND --confirm. This is deliberate.
