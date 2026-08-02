@@ -111,6 +111,16 @@ func TestMirrorDryRun(t *testing.T) {
 	assert.Contains(t, cap.args, "--dry-run")
 }
 
+func TestMirrorNoClean(t *testing.T) {
+	var cap capture
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{}))
+	assert.NotContains(t, cap.args, "--no-clean", "omitted by default")
+
+	cap = capture{}
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{NoClean: true}))
+	assert.Contains(t, cap.args, "--no-clean")
+}
+
 func TestMirrorEmptySelection(t *testing.T) {
 	err := Mirror(context.Background(), func(context.Context, string, []string, []string) error {
 		t.Fatal("runner should not be called for an empty selection")

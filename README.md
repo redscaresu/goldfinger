@@ -136,6 +136,12 @@ Shells out to `ghorg clone <owner> --target-repos-path=<names> --path=<workspace
 so ghorg clones/pulls only the selected repos into goldfinger's workspace. Re-run
 any time to refresh; ghorg pulls existing clones instead of re-cloning.
 
+By default a re-sync also `git clean`s each clone, so the workspace stays a
+pristine reflection of upstream (local edits are discarded). Pass `--no-clean`
+to preserve local changes across re-syncs — i.e. treat the mirror as an editable
+workspace rather than a read-only reflection. Other passthroughs: `--concurrency`,
+`--clone-depth` (shallow), `--dry-run`.
+
 ### `goldfinger apply`
 
 Reads the lockfile and runs a change across exactly that set via multi-gitter.

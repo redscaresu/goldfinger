@@ -20,6 +20,7 @@ func newMirrorCmd() *cobra.Command {
 		workspace     string
 		concurrency   int
 		cloneDepth    int
+		noClean       bool
 		dryRun        bool
 	)
 	cmd := &cobra.Command{
@@ -48,6 +49,7 @@ func newMirrorCmd() *cobra.Command {
 			return runMirror(cmd.Context(), execRun, sel, ws, token, mirror.Options{
 				Concurrency: concurrency,
 				CloneDepth:  cloneDepth,
+				NoClean:     noClean,
 				DryRun:      dryRun,
 			}, cmd.ErrOrStderr())
 		},
@@ -57,6 +59,7 @@ func newMirrorCmd() *cobra.Command {
 	f.StringVar(&workspace, "workspace", "", "absolute workspace dir (default ~/goldfinger; repos land in <workspace>/<owner>)")
 	f.IntVar(&concurrency, "concurrency", 0, "concurrent clones (0 = ghorg default)")
 	f.IntVar(&cloneDepth, "clone-depth", 0, "shallow clone depth (0 = full history)")
+	f.BoolVar(&noClean, "no-clean", false, "preserve local changes in existing clones (skip ghorg's git clean on re-sync)")
 	f.BoolVar(&dryRun, "dry-run", false, "show what ghorg would clone without cloning")
 	return cmd
 }

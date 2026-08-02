@@ -25,6 +25,7 @@ type Options struct {
 	Workspace   string // ghorg --path (absolute); ghorg clones into <workspace>/<owner>
 	Concurrency int    // 0 = ghorg default
 	CloneDepth  int    // 0 = full history
+	NoClean     bool   // skip ghorg's git-clean on existing clones, preserving local changes
 	DryRun      bool
 }
 
@@ -64,6 +65,9 @@ func buildArgs(s models.Selection, namesFile string, opts Options) []string {
 	}
 	if opts.CloneDepth > 0 {
 		args = append(args, "--clone-depth="+strconv.Itoa(opts.CloneDepth))
+	}
+	if opts.NoClean {
+		args = append(args, "--no-clean")
 	}
 	if opts.DryRun {
 		args = append(args, "--dry-run")
