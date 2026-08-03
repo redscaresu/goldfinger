@@ -15,7 +15,10 @@ import (
 // perPage is the max page size the REST API allows, minimising round-trips.
 const perPage = 100
 
-// Client is a rate-limit-aware GitHub API client.
+// Client is a thin, read-only GitHub API client for resolving a selection. Its
+// call volume is tiny (one auth check, one owner lookup, one page per 100
+// repos), so it makes no attempt at rate-limit backoff — a limit error, if it
+// ever occurred, surfaces to the caller rather than being retried.
 type Client struct {
 	gh    *github.Client
 	login string // authenticated user login, resolved by Verify

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +15,7 @@ import (
 func stubGhToken(t *testing.T, token string, ok bool) {
 	t.Helper()
 	old := ghTokenLookup
-	ghTokenLookup = func() (string, bool) { return token, ok }
+	ghTokenLookup = func(context.Context) (string, bool) { return token, ok }
 	t.Cleanup(func() { ghTokenLookup = old })
 }
 
@@ -21,27 +23,35 @@ func TestResolveToken(t *testing.T) {
 	t.Run("env var wins over gh session", func(t *testing.T) {
 		t.Setenv(tokenEnvVar, "pat-from-env")
 		stubGhToken(t, "token-from-gh", true)
-		got, err := resolveToken()
+		got, source, err := resolveToken(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, "pat-from-env", got)
+		assert.Equal(t, tokenSourceEnv, source)
 	})
 
 	t.Run("falls back to local gh session when env unset", func(t *testing.T) {
 		t.Setenv(tokenEnvVar, "")
 		stubGhToken(t, "token-from-gh", true)
-		got, err := resolveToken()
+		got, source, err := resolveToken(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, "token-from-gh", got)
+		assert.Equal(t, tokenSourceGh, source)
 	})
 
 	t.Run("errors naming both options when neither yields a token", func(t *testing.T) {
 		t.Setenv(tokenEnvVar, "")
 		stubGhToken(t, "", false)
-		_, err := resolveToken()
+		_, _, err := resolveToken(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), tokenEnvVar)
 		assert.Contains(t, err.Error(), "gh auth login")
 	})
+}
+
+func TestAnnounceTokenSource(t *testing.T) {
+	var buf bytes.Buffer
+	announceTokenSource(&buf, tokenSourceGh)
+	assert.Equal(t, "auth: using local gh session (gh auth token)\n", buf.String())
 }
 
 func TestValidateTargeting(t *testing.T) {
