@@ -43,7 +43,9 @@ func Mirror(ctx context.Context, run Runner, s models.Selection, token string, o
 	defer cleanup()
 
 	args := buildArgs(s, namesFile, opts)
-	env := overrideEnv(os.Environ(), tokenEnv, token)
+	// Map the PAT onto ghorg's own token var, and strip the source var so the
+	// raw PAT never reaches ghorg's environment.
+	env := overrideEnv(os.Environ(), tokenEnv, token, models.TokenEnvVar)
 	if err := run(ctx, "ghorg", args, env); err != nil {
 		return fmt.Errorf("ghorg clone %s: %w", s.Owner, err)
 	}
@@ -75,15 +77,20 @@ func buildArgs(s models.Selection, namesFile string, opts Options) []string {
 	return args
 }
 
-// overrideEnv returns base with any existing key= entries removed and key=val
-// appended, so the child sees exactly one deterministic value. Appending alone
-// is not enough: on Linux getenv returns the FIRST duplicate, so a value already
-// present in the environment would win over ours.
-func overrideEnv(base []string, key, val string) []string {
+// overrideEnv returns base with key set to val exactly once, and every var named
+// in drop removed. Any pre-existing key= entries are stripped before appending
+// key=val: on Linux getenv returns the FIRST duplicate, so a value already
+// present in the environment would otherwise win over ours. drop lets callers
+// scrub the source PAT var so it never reaches the child.
+func overrideEnv(base []string, key, val string, drop ...string) []string {
+	strip := map[string]bool{key: true}
+	for _, d := range drop {
+		strip[d] = true
+	}
 	out := make([]string, 0, len(base)+1)
-	prefix := key + "="
 	for _, e := range base {
-		if !strings.HasPrefix(e, prefix) {
+		name := e[:strings.IndexByte(e+"=", '=')]
+		if !strip[name] {
 			out = append(out, e)
 		}
 	}

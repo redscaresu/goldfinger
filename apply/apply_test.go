@@ -149,6 +149,18 @@ func TestApplyOverridesExistingToken(t *testing.T) {
 	assert.Equal(t, tokenEnv+"=our-token", vals[0])
 }
 
+func TestApplyStripsSourcePATFromChildEnv(t *testing.T) {
+	t.Setenv(models.TokenEnvVar, "raw-pat") // operator's exported GOLD_FINGER_PAT
+	var cap capture
+	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "mapped-token"))
+
+	for _, e := range cap.env {
+		assert.NotContains(t, e, models.TokenEnvVar+"=", "source PAT var must not reach the child")
+		assert.NotContains(t, e, "raw-pat", "raw PAT value must not reach the child under any name")
+	}
+	assert.Contains(t, cap.env, tokenEnv+"=mapped-token")
+}
+
 func TestApplyPropagatesRunError(t *testing.T) {
 	run := func(context.Context, string, []string, []string) error {
 		return errors.New("multi-gitter exploded")

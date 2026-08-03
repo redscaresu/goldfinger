@@ -97,6 +97,18 @@ func TestMirrorOverridesExistingToken(t *testing.T) {
 	assert.Equal(t, tokenEnv+"=our-token", vals[0])
 }
 
+func TestMirrorStripsSourcePATFromChildEnv(t *testing.T) {
+	t.Setenv(models.TokenEnvVar, "raw-pat") // operator's exported GOLD_FINGER_PAT
+	var cap capture
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "mapped-token", Options{}))
+
+	for _, e := range cap.env {
+		assert.NotContains(t, e, models.TokenEnvVar+"=", "source PAT var must not reach the child")
+		assert.NotContains(t, e, "raw-pat", "raw PAT value must not reach the child under any name")
+	}
+	assert.Contains(t, cap.env, tokenEnv+"=mapped-token")
+}
+
 func TestMirrorOrgCloneType(t *testing.T) {
 	s := userSelection()
 	s.OwnerType = models.OwnerOrganization

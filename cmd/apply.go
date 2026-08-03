@@ -113,11 +113,18 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 		baseLabel = "each repo's default branch"
 	}
 	banner(errOut, fmt.Sprintf("Applying to %d repo(s) [%s] onto base %s", len(sel.Repos), mode, baseLabel))
-	// Spell out the resolved base per repo so the routing is auditable before
-	// anything runs — this is exactly what a mixed dev/main selection needs to
-	// confirm each PR lands on the right branch.
+	// Spell out the base per repo so the routing is auditable before anything
+	// runs — this is exactly what a mixed dev/main selection needs to confirm
+	// each PR lands on the right branch.
 	for _, r := range sel.Repos {
 		fmt.Fprintf(errOut, "  %s -> %s\n", r.FullName(), resolveBase(spec.BaseBranch, r))
+	}
+	// Without a global --base-branch, goldfinger passes no base to multi-gitter,
+	// which targets each repo's *live* default at run time. The branches printed
+	// above are the defaults recorded at selection time, so flag that they can
+	// drift rather than presenting them as the guaranteed target.
+	if spec.BaseBranch == "" {
+		fmt.Fprintln(errOut, "  (branches shown are each repo's default recorded at selection; multi-gitter targets the live default at run time)")
 	}
 	if err := apply.Apply(ctx, run, sel, spec, token); err != nil {
 		return err

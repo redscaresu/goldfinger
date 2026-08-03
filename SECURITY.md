@@ -16,8 +16,19 @@ Please include:
 
 ## Handling of credentials
 
-goldfinger reads a GitHub PAT from `GITHUB_TOKEN` and embeds it in clone URLs
-for push authentication. The token is redacted from all command output and
-error messages before they leave the tool; a regression test enforces this. If
-you find a path where a token can leak into logs, output, or committed files,
-treat it as a security issue and report it privately as above.
+goldfinger reads a GitHub PAT from the `GOLD_FINGER_PAT` environment variable
+and uses it for read-only API discovery. It never writes to GitHub or runs
+`git` itself: mirroring and PR-fanout are delegated to `ghorg` and
+`multi-gitter`.
+
+The PAT is handed to those child tools only through the environment variables
+they each expect — `GHORG_GITHUB_TOKEN` for ghorg, `GITHUB_TOKEN` for
+multi-gitter — and **never on the command line** (a regression test asserts no
+token appears in argv). The source `GOLD_FINGER_PAT` variable is stripped from
+the child environment, so the raw PAT under that name never reaches a delegate
+or a user-supplied `apply` script.
+
+goldfinger streams the child tools' output straight through; it does not add a
+redaction layer of its own, so it relies on ghorg and multi-gitter not printing
+the token. If you find a path where a token can leak into logs, argv, output, or
+committed files, treat it as a security issue and report it privately as above.
