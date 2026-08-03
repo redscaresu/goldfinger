@@ -34,10 +34,11 @@ func newSelectCmd() *cobra.Command {
 		Use:   "select",
 		Short: "Resolve an owner's repos by topic and freeze them as a selection",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token, err := resolveToken()
+			token, source, err := resolveToken(cmd.Context())
 			if err != nil {
 				return err
 			}
+			announceTokenSource(cmd.ErrOrStderr(), source)
 			if err := validateTargeting(t); err != nil {
 				return err
 			}
