@@ -41,7 +41,16 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	}
 	defer cleanup()
 
-	args := buildArgs(s, spec, scriptPath)
+	// Point multi-gitter at an empty config file so its default config-file
+	// discovery (which can carry its own repo/org selection and filters) can't
+	// override the exact lockfile set goldfinger passes as --repo flags.
+	configPath, cfgCleanup, err := writeEmptyFile("goldfinger-mg-config-*.yaml")
+	if err != nil {
+		return err
+	}
+	defer cfgCleanup()
+
+	args := buildArgs(s, spec, scriptPath, configPath)
 	// Map the PAT onto multi-gitter's own token var, and strip the source var
 	// so the raw PAT never reaches multi-gitter or the user's apply script.
 	env := overrideEnv(os.Environ(), tokenEnv, token, models.TokenEnvVar)
@@ -52,8 +61,8 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 }
 
 // buildArgs constructs the multi-gitter argv. Kept pure for unit testing.
-func buildArgs(s models.Selection, spec models.ApplySpec, scriptPath string) []string {
-	args := []string{"run", scriptPath}
+func buildArgs(s models.Selection, spec models.ApplySpec, scriptPath, configPath string) []string {
+	args := []string{"run", scriptPath, "--config=" + configPath}
 	for _, r := range s.Repos {
 		args = append(args, "--repo="+r.FullName())
 	}
@@ -110,6 +119,21 @@ func writeScript(cmd []string) (path string, cleanup func(), err error) {
 	if err := os.Chmod(f.Name(), 0o700); err != nil {
 		os.Remove(f.Name())
 		return "", nil, fmt.Errorf("chmod script: %w", err)
+	}
+	return f.Name(), func() { os.Remove(f.Name()) }, nil
+}
+
+// writeEmptyFile creates an empty temp file matching pattern and returns its
+// path and a cleanup func. Used to hand multi-gitter an empty --config so its
+// default config-file discovery can't override the lockfile selection.
+func writeEmptyFile(pattern string) (path string, cleanup func(), err error) {
+	f, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("close temp file: %w", err)
 	}
 	return f.Name(), func() { os.Remove(f.Name()) }, nil
 }

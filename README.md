@@ -142,6 +142,13 @@ to preserve local changes across re-syncs — i.e. treat the mirror as an editab
 workspace rather than a read-only reflection. Other passthroughs: `--concurrency`,
 `--clone-depth` (shallow), `--dry-run`.
 
+To keep the lockfile authoritative, goldfinger neutralises ambient ghorg config
+that could change the set behind your back: it strips set-narrowing/pruning
+`GHORG_*` environment variables (`GHORG_TOPICS`, `GHORG_MATCH_REGEX`,
+`GHORG_SKIP_ARCHIVED`, `GHORG_PRUNE*`, …) from ghorg's environment and forces an
+empty `--ghorgignore-path`, so a stray env var or `~/.config/ghorg/ghorgignore`
+can't silently drop repos.
+
 ### `goldfinger apply`
 
 Reads the lockfile and runs a change across exactly that set via multi-gitter.
@@ -175,6 +182,10 @@ entry plus the script and PR flags.
   against an accidental fleet-wide PR blast. A real run should always follow a
   reviewed dry-run; when an agent runs it under explicit human authorization,
   prefer `--draft`.
+- **Config isolation:** goldfinger invokes multi-gitter with an empty `--config`
+  so an ambient `multi-gitter` config file can't inject its own repo/org
+  selection or filters — the lockfile's `--repo` set is the only source of truth
+  for which repos get changed.
 
 ### Named selections
 

@@ -29,6 +29,9 @@ WORKFLOW
        goldfinger mirror
      Repos land in <workspace>/<owner> (default workspace ~/goldfinger).
      Re-run any time to refresh (ghorg pulls existing clones).
+     The lockfile is authoritative: goldfinger strips set-narrowing/pruning
+     GHORG_* env vars and forces an empty ghorgignore, and invokes multi-gitter
+     with an empty --config, so ambient host config can't change the set.
 
   3. Apply — run a change across the selection and open PRs:
        goldfinger apply --branch bump --commit-message "msg" --pr-title "title" \
