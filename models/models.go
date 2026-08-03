@@ -19,6 +19,13 @@ func (r Repo) FullName() string {
 	return r.Owner + "/" + r.Name
 }
 
+// TokenEnvVar is the environment variable goldfinger reads the operator's
+// GitHub PAT from. goldfinger maps it onto each child tool's own token variable
+// (GITHUB_TOKEN, GHORG_GITHUB_TOKEN) and strips it from the child environment,
+// so the raw PAT never reaches a delegate or a user-supplied apply script under
+// this name.
+const TokenEnvVar = "GOLD_FINGER_PAT"
+
 // Owner types as reported by the GitHub API and stored in a Selection.
 const (
 	OwnerUser         = "User"

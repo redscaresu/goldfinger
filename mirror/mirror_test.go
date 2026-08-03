@@ -97,6 +97,49 @@ func TestMirrorOverridesExistingToken(t *testing.T) {
 	assert.Equal(t, tokenEnv+"=our-token", vals[0])
 }
 
+func TestMirrorNeutralisesAmbientConfig(t *testing.T) {
+	// Ambient set-narrowing/pruning GHORG_* vars must not reach ghorg, and an
+	// empty ghorgignore must be forced so no host ignore file can drop repos.
+	t.Setenv("GHORG_TOPICS", "should-be-stripped")
+	t.Setenv("GHORG_MATCH_REGEX", "^keep-")
+	t.Setenv("GHORG_SKIP_ARCHIVED", "true")
+	t.Setenv("GHORG_PRUNE_NO_CONFIRM", "true")
+	t.Setenv("GHORG_IGNORE_PATH", "/host/ghorgignore")
+
+	var cap capture
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{}))
+
+	for _, e := range cap.env {
+		for _, banned := range ambientGhorgEnv {
+			assert.NotContains(t, e, banned+"=", "ambient ghorg config var %s must be stripped", banned)
+		}
+	}
+
+	var ignorePath string
+	for _, a := range cap.args {
+		if strings.HasPrefix(a, "--ghorgignore-path=") {
+			ignorePath = strings.TrimPrefix(a, "--ghorgignore-path=")
+		}
+	}
+	require.NotEmpty(t, ignorePath, "mirror must force an explicit --ghorgignore-path")
+	assert.NotEqual(t, "/host/ghorgignore", ignorePath, "must not use the host ghorgignore")
+	// File is cleaned up after Mirror returns.
+	_, statErr := os.Stat(ignorePath)
+	assert.True(t, os.IsNotExist(statErr), "temp ghorgignore should be removed after Mirror returns")
+}
+
+func TestMirrorStripsSourcePATFromChildEnv(t *testing.T) {
+	t.Setenv(models.TokenEnvVar, "raw-pat") // operator's exported GOLD_FINGER_PAT
+	var cap capture
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "mapped-token", Options{}))
+
+	for _, e := range cap.env {
+		assert.NotContains(t, e, models.TokenEnvVar+"=", "source PAT var must not reach the child")
+		assert.NotContains(t, e, "raw-pat", "raw PAT value must not reach the child under any name")
+	}
+	assert.Contains(t, cap.env, tokenEnv+"=mapped-token")
+}
+
 func TestMirrorOrgCloneType(t *testing.T) {
 	s := userSelection()
 	s.OwnerType = models.OwnerOrganization

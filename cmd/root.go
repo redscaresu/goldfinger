@@ -1,13 +1,16 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/redscaresu/goldfinger/models"
+	"github.com/spf13/cobra"
+)
 
 // version is the binary version. It is overridden at release time via
 // -ldflags "-X main.version=<tag>".
 var version = "dev"
 
 // tokenEnvVar is the environment variable holding the GitHub PAT.
-const tokenEnvVar = "GOLD_FINGER_PAT"
+const tokenEnvVar = models.TokenEnvVar
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{

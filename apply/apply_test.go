@@ -149,6 +149,36 @@ func TestApplyOverridesExistingToken(t *testing.T) {
 	assert.Equal(t, tokenEnv+"=our-token", vals[0])
 }
 
+func TestApplyStripsSourcePATFromChildEnv(t *testing.T) {
+	t.Setenv(models.TokenEnvVar, "raw-pat") // operator's exported GOLD_FINGER_PAT
+	var cap capture
+	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "mapped-token"))
+
+	for _, e := range cap.env {
+		assert.NotContains(t, e, models.TokenEnvVar+"=", "source PAT var must not reach the child")
+		assert.NotContains(t, e, "raw-pat", "raw PAT value must not reach the child under any name")
+	}
+	assert.Contains(t, cap.env, tokenEnv+"=mapped-token")
+}
+
+func TestApplyPinsEmptyConfig(t *testing.T) {
+	// multi-gitter is pointed at a goldfinger-owned empty config so host config
+	// discovery can't override the lockfile selection. The file must exist at
+	// call time and be cleaned up afterwards.
+	var cap capture
+	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "t"))
+
+	var configPath string
+	for _, a := range cap.args {
+		if strings.HasPrefix(a, "--config=") {
+			configPath = strings.TrimPrefix(a, "--config=")
+		}
+	}
+	require.NotEmpty(t, configPath, "apply must pass an explicit --config to multi-gitter")
+	_, statErr := os.Stat(configPath)
+	assert.True(t, os.IsNotExist(statErr), "temp config should be removed after Apply returns")
+}
+
 func TestApplyPropagatesRunError(t *testing.T) {
 	run := func(context.Context, string, []string, []string) error {
 		return errors.New("multi-gitter exploded")
