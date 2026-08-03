@@ -31,6 +31,66 @@ jobs:
         # -count=2: surfaces parallel-subtest races that only flake in CI.
         run: go test -race -count=2 ./...
 
+  coverage:
+    runs-on: ubuntu-latest
+    # contents: write lets the push-to-main run publish the badge SVG to the
+    # `badges` branch. On PRs (incl. forks) the token is read-only; the publish
+    # step is push-only, so it just runs the 80% gate there.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Measure coverage and enforce the 80% floor
+        id: cov
+        run: |
+          go test ./... -coverprofile=cover.out
+          pct=$(go tool cover -func=cover.out | awk '/^total:/ {gsub(/%/,"",$NF); print $NF}')
+          echo "pct=$pct" >> "$GITHUB_OUTPUT"
+          echo "total coverage: ${pct}%"
+          # Fail the build if coverage drops below the floor, so the badge below
+          # can never overstate a number the pipeline let through.
+          awk -v p="$pct" 'BEGIN { if (p+0 < 80) { print "::error::coverage " p "% is below the 80% floor"; exit 1 } }'
+      - name: Publish coverage badge
+        # Push-to-main only, and best-effort: a hiccup here must never turn the
+        # (already-passed) coverage gate red. Publishes a self-hosted SVG to the
+        # `badges` branch — no external service, only the built-in token.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pct='${{ steps.cov.outputs.pct }}'
+          color=red
+          awk "BEGIN{exit !($pct>=60)}" && color=yellow
+          awk "BEGIN{exit !($pct>=70)}" && color=yellowgreen
+          awk "BEGIN{exit !($pct>=80)}" && color=green
+          awk "BEGIN{exit !($pct>=90)}" && color=brightgreen
+          curl -sfL "https://img.shields.io/badge/coverage-${pct}%25-${color}" -o coverage.svg
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          repo="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          dir="$(mktemp -d)"
+          if git clone --depth=1 --branch badges "$repo" "$dir" 2>/dev/null; then
+            :
+          else
+            git clone --depth=1 "$repo" "$dir"
+            git -C "$dir" checkout --orphan badges
+            git -C "$dir" rm -rf . >/dev/null 2>&1 || true
+          fi
+          cp coverage.svg "$dir/coverage.svg"
+          git -C "$dir" add coverage.svg
+          if git -C "$dir" diff --cached --quiet; then
+            echo "badge unchanged (${pct}%)"
+          else
+            git -C "$dir" commit -m "coverage: ${pct}%"
+            git -C "$dir" push origin badges
+          fi
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:

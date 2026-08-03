@@ -1,6 +1,7 @@
 # goldfinger
 
 [![CI](https://github.com/redscaresu/goldfinger/actions/workflows/ci.yml/badge.svg)](https://github.com/redscaresu/goldfinger/actions/workflows/ci.yml)
+[![coverage](https://raw.githubusercontent.com/redscaresu/goldfinger/badges/coverage.svg)](https://github.com/redscaresu/goldfinger/actions/workflows/ci.yml)
 
 An orchestration layer for fleet-wide GitHub work. goldfinger resolves a set of
 repos once — by org/user and topic — freezes it as a reviewable **selection**,
