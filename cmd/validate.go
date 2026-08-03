@@ -2,16 +2,7 @@ package main
 
 import (
 	"errors"
-	"fmt"
 )
-
-// validateToken ensures a PAT was provided via the environment.
-func validateToken(token string) error {
-	if token == "" {
-		return fmt.Errorf("%s environment variable is required", tokenEnvVar)
-	}
-	return nil
-}
 
 // validateTargeting enforces the repo-selection rules: an org is required, and
 // exactly one of --all-repos or --topic must be given.

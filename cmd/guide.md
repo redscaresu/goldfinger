@@ -10,9 +10,12 @@ goldfinger never writes to GitHub itself. Discovery is read-only; mirroring is
 ghorg; commits/pushes/PRs are multi-gitter.
 
 PREREQUISITES
-  - Set GOLD_FINGER_PAT to a GitHub PAT. goldfinger maps it to the env vars
-    ghorg (GHORG_GITHUB_TOKEN) and multi-gitter (GITHUB_TOKEN) expect, so you
-    set one token, not three.
+  - Auth: if you're logged in with the GitHub CLI (gh auth login), goldfinger
+    uses that session automatically — nothing to set. Otherwise (e.g. CI) set
+    GOLD_FINGER_PAT to a GitHub PAT, which overrides the gh session when present.
+    Either way goldfinger maps the one token to the env vars ghorg
+    (GHORG_GITHUB_TOKEN) and multi-gitter (GITHUB_TOKEN) expect — one token, not
+    three.
   - Install ghorg and multi-gitter and put them on PATH.
   - Configure a git identity (git config user.name / user.email). multi-gitter
     authors the apply commit from it; without it, apply silently makes no change

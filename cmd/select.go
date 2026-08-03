@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/redscaresu/goldfinger/client"
@@ -35,8 +34,8 @@ func newSelectCmd() *cobra.Command {
 		Use:   "select",
 		Short: "Resolve an owner's repos by topic and freeze them as a selection",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token := os.Getenv(tokenEnvVar)
-			if err := validateToken(token); err != nil {
+			token, err := resolveToken()
+			if err != nil {
 				return err
 			}
 			if err := validateTargeting(t); err != nil {

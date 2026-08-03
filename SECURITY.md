@@ -16,10 +16,12 @@ Please include:
 
 ## Handling of credentials
 
-goldfinger reads a GitHub PAT from the `GOLD_FINGER_PAT` environment variable
-and uses it for read-only API discovery. It never writes to GitHub or runs
-`git` itself: mirroring and PR-fanout are delegated to `ghorg` and
-`multi-gitter`.
+goldfinger resolves a single GitHub token and uses it for read-only API
+discovery. It takes the token from the `GOLD_FINGER_PAT` environment variable if
+set; otherwise it falls back to the local GitHub CLI session by shelling out to
+`gh auth token` (so an interactive user needs no separate PAT). goldfinger never
+writes to GitHub or runs `git` itself: mirroring and PR-fanout are delegated to
+`ghorg` and `multi-gitter`.
 
 The PAT is handed to those child tools only through the environment variables
 they each expect — `GHORG_GITHUB_TOKEN` for ghorg, `GITHUB_TOKEN` for

@@ -7,12 +7,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateToken(t *testing.T) {
-	require.NoError(t, validateToken("ghp_xxx"))
+// stubGhToken swaps the local-gh fallback for a fixed result for one test,
+// restoring the real lookup afterwards. It lets token tests run identically
+// whether or not the host is logged into gh.
+func stubGhToken(t *testing.T, token string, ok bool) {
+	t.Helper()
+	old := ghTokenLookup
+	ghTokenLookup = func() (string, bool) { return token, ok }
+	t.Cleanup(func() { ghTokenLookup = old })
+}
 
-	err := validateToken("")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), tokenEnvVar)
+func TestResolveToken(t *testing.T) {
+	t.Run("env var wins over gh session", func(t *testing.T) {
+		t.Setenv(tokenEnvVar, "pat-from-env")
+		stubGhToken(t, "token-from-gh", true)
+		got, err := resolveToken()
+		require.NoError(t, err)
+		assert.Equal(t, "pat-from-env", got)
+	})
+
+	t.Run("falls back to local gh session when env unset", func(t *testing.T) {
+		t.Setenv(tokenEnvVar, "")
+		stubGhToken(t, "token-from-gh", true)
+		got, err := resolveToken()
+		require.NoError(t, err)
+		assert.Equal(t, "token-from-gh", got)
+	})
+
+	t.Run("errors naming both options when neither yields a token", func(t *testing.T) {
+		t.Setenv(tokenEnvVar, "")
+		stubGhToken(t, "", false)
+		_, err := resolveToken()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), tokenEnvVar)
+		assert.Contains(t, err.Error(), "gh auth login")
+	})
 }
 
 func TestValidateTargeting(t *testing.T) {

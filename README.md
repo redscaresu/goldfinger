@@ -33,9 +33,12 @@ Everything goldfinger *itself* does is the glue around those two calls:
 - **Feed both tools the identical set** — ghorg via a `--target-repos-path` names
   file, multi-gitter via repeated `--repo` flags. Neither tool re-discovers, so
   the two phases can't drift apart.
-- **One token, one UX** — you set `GOLD_FINGER_PAT`; goldfinger maps it to the env
-  vars each tool expects (`GHORG_GITHUB_TOKEN`, `GITHUB_TOKEN`), checks both are
-  installed, and frames their output.
+- **No token to set up** — if you're already logged in with the GitHub CLI,
+  goldfinger uses that session automatically (`gh auth token`); nothing to export.
+  It maps that one token to the env vars each tool expects
+  (`GHORG_GITHUB_TOKEN`, `GITHUB_TOKEN`), checks both tools are installed, and
+  frames their output. `GOLD_FINGER_PAT` is the fallback for when there's no local
+  gh login (e.g. CI).
 
 So goldfinger is a few hundred lines of orchestration, not a reimplementation.
 Rebuilding ghorg or multi-gitter would at best match tools that are already fast
@@ -74,7 +77,13 @@ the selection a single frozen artifact that feeds both phases.
 ## Quickstart
 
 ```sh
-export GOLD_FINGER_PAT=<PAT>   # one token; goldfinger maps it to ghorg + multi-gitter
+# No token setup needed if you're already logged in with the GitHub CLI —
+# goldfinger picks up your `gh auth` session automatically and maps it to
+# ghorg + multi-gitter. (Log in once with: gh auth login)
+#
+# Only if you have no local gh login (e.g. CI), set a PAT explicitly — it
+# overrides the gh session when present:
+# export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
 
 # 1. freeze the target set -> ./goldfinger.selection
 goldfinger select --org mycompany --topic platform
@@ -228,21 +237,26 @@ go install github.com/lindell/multi-gitter@latest
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Then set your token once:
+For auth, if you already use the GitHub CLI there's **nothing to set up** —
+goldfinger picks up your `gh auth` session automatically (it shells out to
+`gh auth token`). Log in once and you're done:
+
+```sh
+gh auth login   # grants `repo` scope by default, which is what goldfinger needs
+```
+
+`GOLD_FINGER_PAT` is the **fallback** for when no local gh login is available:
+you don't have the gh CLI set up, or you're running in **CI** (no interactive
+login — store the PAT as a secret and export it in the job). When set, it takes
+precedence over the gh session. It needs Contents + Pull requests read/write:
 
 ```sh
 export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
 ```
 
-No need to mint a new PAT if you already use the GitHub CLI — reuse that login
-(the token needs `repo` scope, which `gh auth login` grants by default):
-
-```sh
-export GOLD_FINGER_PAT="$(gh auth token)"
-```
-
-goldfinger maps `GOLD_FINGER_PAT` to the env vars ghorg and multi-gitter expect,
-so you only set this one. Run `goldfinger guide` for the operator playbook.
+Either way goldfinger resolves a single token and maps it to the env vars ghorg
+and multi-gitter expect, so you never juggle three. Run `goldfinger guide` for
+the operator playbook.
 
 ## Requirements
 
@@ -251,9 +265,12 @@ so you only set this one. Run `goldfinger guide` for the operator playbook.
   install instructions if missing.
 - A **git identity** (`git config user.name` / `user.email`) — multi-gitter
   authors the `apply` commit from it.
-- **`GOLD_FINGER_PAT`** — a GitHub PAT. goldfinger uses it for API discovery and
-  maps it to the env vars ghorg (`GHORG_GITHUB_TOKEN`) and multi-gitter
-  (`GITHUB_TOKEN`) expect, so you set one token, not three.
+- **A GitHub token** for API discovery, mapped to the env vars ghorg
+  (`GHORG_GITHUB_TOKEN`) and multi-gitter (`GITHUB_TOKEN`) expect, so you set one
+  token, not three. By default goldfinger reuses your local `gh auth login`
+  session automatically — nothing to set. Setting `GOLD_FINGER_PAT` overrides
+  that and is the fallback when you have no local gh login or you're running in
+  CI.
 
 ## For AI agents
 

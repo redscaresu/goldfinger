@@ -33,8 +33,8 @@ func newApplyCmd() *cobra.Command {
 		Use:   "apply [flags] -- command [args...]",
 		Short: "Run a change across the selection and open PRs via multi-gitter",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token := os.Getenv(tokenEnvVar)
-			if err := validateToken(token); err != nil {
+			token, err := resolveToken()
+			if err != nil {
 				return err
 			}
 			script := scriptArgs(cmd, args)
