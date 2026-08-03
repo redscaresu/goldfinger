@@ -9,12 +9,17 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/redscaresu/goldfinger/models"
 )
 
 // tokenEnv is the environment variable multi-gitter reads its GitHub PAT from.
 const tokenEnv = "GITHUB_TOKEN"
+
+// sleep pauses between batches. It is a package var so tests can stub it and not
+// actually wait.
+var sleep = time.Sleep
 
 // maxRepos caps how many repos we pass as repeated --repo flags. multi-gitter
 // has no repo-list-file input, so a very large set would risk an over-length
@@ -50,14 +55,49 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	}
 	defer cfgCleanup()
 
-	args := buildArgs(s, spec, scriptPath, configPath)
 	// Map the PAT onto multi-gitter's own token var, and strip the source var
 	// so the raw PAT never reaches multi-gitter or the user's apply script.
 	env := overrideEnv(os.Environ(), tokenEnv, token, models.TokenEnvVar)
-	if err := run(ctx, "multi-gitter", args, env); err != nil {
-		return fmt.Errorf("multi-gitter run: %w", err)
+
+	// Split the selection into batches so PR creation stays under GitHub's
+	// secondary rate limit (80 content-generating requests/min). Each batch is a
+	// separate multi-gitter run over a subset of the lockfile; a pause between
+	// batches spreads the writes out. multi-gitter's default conflict-strategy is
+	// "skip", so a batch that fails partway (e.g. the hourly limit) is resumable
+	// by re-running — already-created PRs are skipped.
+	batches := chunk(s.Repos, spec.BatchSize)
+	for i, repos := range batches {
+		if i > 0 && spec.BatchPause > 0 {
+			sleep(spec.BatchPause)
+		}
+		sub := s
+		sub.Repos = repos
+		args := buildArgs(sub, spec, scriptPath, configPath)
+		if err := run(ctx, "multi-gitter", args, env); err != nil {
+			if len(batches) > 1 {
+				return fmt.Errorf("multi-gitter run (batch %d/%d): %w", i+1, len(batches), err)
+			}
+			return fmt.Errorf("multi-gitter run: %w", err)
+		}
 	}
 	return nil
+}
+
+// chunk splits repos into slices of at most size. A size <= 0 (or one large
+// enough to hold everything) yields a single chunk — the unthrottled default.
+func chunk(repos []models.Repo, size int) [][]models.Repo {
+	if size <= 0 || size >= len(repos) {
+		return [][]models.Repo{repos}
+	}
+	var out [][]models.Repo
+	for start := 0; start < len(repos); start += size {
+		end := start + size
+		if end > len(repos) {
+			end = len(repos)
+		}
+		out = append(out, repos[start:end])
+	}
+	return out
 }
 
 // buildArgs constructs the multi-gitter argv. Kept pure for unit testing.

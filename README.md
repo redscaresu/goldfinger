@@ -195,6 +195,22 @@ entry plus the script and PR flags.
   so an ambient `multi-gitter` config file can't inject its own repo/org
   selection or filters — the lockfile's `--repo` set is the only source of truth
   for which repos get changed.
+- **Rate limits.** Opening PRs across a large fleet can trip GitHub's *secondary*
+  rate limits — separate from the 5,000/hr REST budget. GitHub allows **80
+  content-generating requests per minute** and **500 per hour**, and a single PR
+  is more than one such request: the PR itself, plus one each for `--label` and
+  `--reviewer`. So a PR with labels + reviewers costs ~3–4, putting the real
+  ceiling around ~150 PRs/hour (or ~500 with none).
+  - `--batch-size N` opens PRs in chunks of `N` repos, and `--batch-pause D`
+    sleeps `D` (e.g. `90s`) between chunks. This keeps you under the **80/min**
+    limit — size a batch so `N × requests-per-PR` stays well below 80 and pause
+    ≥ `60s`. Example: `--batch-size 15 --batch-pause 90s`.
+  - Batching **cannot** beat the **500/hour** ceiling — no within-hour pacing
+    can. For a fleet past that, the run will eventually hit the hourly limit and
+    error; just **re-run the same `apply`** after the hour resets. multi-gitter's
+    default `conflict-strategy: skip` means repos that already have a branch/PR
+    are skipped, so a re-run only attempts the remainder — apply is naturally
+    resumable, which is how you spread a big fleet across hours.
 
 ### Named selections
 

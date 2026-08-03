@@ -54,6 +54,16 @@ type ApplySpec struct {
 	Draft         bool
 	DryRun        bool
 	Script        []string // the command to run in each repo, e.g. ["sed", "-i", ...]
+
+	// BatchSize and BatchPause throttle PR creation to stay under GitHub's
+	// secondary rate limits (80 content-generating requests/min). When BatchSize
+	// > 0, apply runs multi-gitter over the selection in chunks of that many
+	// repos, sleeping BatchPause between chunks. Zero BatchSize = one run over the
+	// whole selection (no throttling). Note: neither beats GitHub's 500
+	// content-request/hour ceiling — a large fleet must spread across hours, which
+	// re-running (multi-gitter skips repos already done) does naturally.
+	BatchSize  int
+	BatchPause time.Duration
 }
 
 // Selection is the frozen set of repos a run targets: the shared artifact that
