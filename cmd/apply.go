@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/redscaresu/goldfinger/apply"
 	"github.com/redscaresu/goldfinger/models"
@@ -28,13 +29,15 @@ func newApplyCmd() *cobra.Command {
 		draft         bool
 		dryRun        bool
 		confirm       bool
+		batchSize     int
+		batchPause    time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "apply [flags] -- command [args...]",
 		Short: "Run a change across the selection and open PRs via multi-gitter",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token := os.Getenv(tokenEnvVar)
-			if err := validateToken(token); err != nil {
+			token, err := resolveToken()
+			if err != nil {
 				return err
 			}
 			script := scriptArgs(cmd, args)
@@ -81,6 +84,8 @@ func newApplyCmd() *cobra.Command {
 				Draft:         draft,
 				DryRun:        dryRun,
 				Script:        script,
+				BatchSize:     batchSize,
+				BatchPause:    batchPause,
 			}
 			return runApply(cmd.Context(), execRun, sel, spec, token, cmd.ErrOrStderr())
 		},
@@ -98,6 +103,8 @@ func newApplyCmd() *cobra.Command {
 	f.BoolVar(&draft, "draft", false, "open PRs as drafts")
 	f.BoolVar(&dryRun, "dry-run", true, "run without pushing or opening PRs (default; pass --dry-run=false for a real run)")
 	f.BoolVar(&confirm, "confirm", false, "required alongside --dry-run=false to actually open PRs")
+	f.IntVar(&batchSize, "batch-size", 0, "open PRs in batches of this many repos to stay under GitHub rate limits (0 = one run over the whole selection)")
+	f.DurationVar(&batchPause, "batch-pause", 0, "pause between batches, e.g. 60s (only used with --batch-size)")
 	return cmd
 }
 
@@ -113,6 +120,9 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 		baseLabel = "each repo's default branch"
 	}
 	banner(errOut, fmt.Sprintf("Applying to %d repo(s) [%s] onto base %s", len(sel.Repos), mode, baseLabel))
+	if spec.BatchSize > 0 && spec.BatchSize < len(sel.Repos) {
+		fmt.Fprintf(errOut, "  throttling: batches of %d, pausing %s between them (stays under GitHub's 80 writes/min; the 500/hour ceiling still needs a re-run to resume)\n", spec.BatchSize, spec.BatchPause)
+	}
 	// Spell out the base per repo so the routing is auditable before anything
 	// runs — this is exactly what a mixed dev/main selection needs to confirm
 	// each PR lands on the right branch.

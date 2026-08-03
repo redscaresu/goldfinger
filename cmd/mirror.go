@@ -27,8 +27,8 @@ func newMirrorCmd() *cobra.Command {
 		Use:   "mirror",
 		Short: "Clone the selection into a local workspace via ghorg",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token := os.Getenv(tokenEnvVar)
-			if err := validateToken(token); err != nil {
+			token, err := resolveToken()
+			if err != nil {
 				return err
 			}
 			if err := requireTool("ghorg", "https://github.com/gabrie30/ghorg#installation"); err != nil {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redscaresu/goldfinger/models"
 	"github.com/stretchr/testify/assert"
@@ -187,6 +188,98 @@ func TestApplyPropagatesRunError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multi-gitter run")
 	assert.Contains(t, err.Error(), "exploded")
+}
+
+// multiCapture records every runner invocation, for batch tests.
+type multiCapture struct {
+	calls [][]string // args of each call
+}
+
+func (m *multiCapture) run(_ context.Context, _ string, args, _ []string) error {
+	cp := make([]string, len(args))
+	copy(cp, args)
+	m.calls = append(m.calls, cp)
+	return nil
+}
+
+func fiveRepoSelection() models.Selection {
+	s := models.Selection{Owner: "redscaresu", OwnerType: models.OwnerUser}
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		s.Repos = append(s.Repos, models.Repo{Owner: "redscaresu", Name: n})
+	}
+	return s
+}
+
+func repoFlags(args []string) []string {
+	var repos []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--repo=") {
+			repos = append(repos, strings.TrimPrefix(a, "--repo="))
+		}
+	}
+	return repos
+}
+
+func TestApplyBatchesRunsAndPauses(t *testing.T) {
+	var pauses []time.Duration
+	orig := sleep
+	sleep = func(d time.Duration) { pauses = append(pauses, d) }
+	t.Cleanup(func() { sleep = orig })
+
+	var mc multiCapture
+	spec := baseSpec()
+	spec.BatchSize = 2
+	spec.BatchPause = 90 * time.Second
+	require.NoError(t, Apply(context.Background(), mc.run, fiveRepoSelection(), spec, "t"))
+
+	// 5 repos / batch 2 -> 3 batches, split in order, none dropped.
+	require.Len(t, mc.calls, 3)
+	assert.Equal(t, []string{"redscaresu/a", "redscaresu/b"}, repoFlags(mc.calls[0]))
+	assert.Equal(t, []string{"redscaresu/c", "redscaresu/d"}, repoFlags(mc.calls[1]))
+	assert.Equal(t, []string{"redscaresu/e"}, repoFlags(mc.calls[2]))
+
+	// Pause happens between batches only: 3 batches -> 2 pauses, each the set value.
+	assert.Equal(t, []time.Duration{90 * time.Second, 90 * time.Second}, pauses)
+}
+
+func TestApplyNoBatchIsSingleRun(t *testing.T) {
+	orig := sleep
+	sleep = func(time.Duration) { t.Fatal("no pause expected without batching") }
+	t.Cleanup(func() { sleep = orig })
+
+	var mc multiCapture
+	require.NoError(t, Apply(context.Background(), mc.run, fiveRepoSelection(), baseSpec(), "t"))
+	require.Len(t, mc.calls, 1, "unbatched apply is one run over the whole selection")
+	assert.Len(t, repoFlags(mc.calls[0]), 5)
+}
+
+func TestApplyBatchErrorReportsBatchNumber(t *testing.T) {
+	orig := sleep
+	sleep = func(time.Duration) {}
+	t.Cleanup(func() { sleep = orig })
+
+	calls := 0
+	run := func(context.Context, string, []string, []string) error {
+		calls++
+		if calls == 2 {
+			return errors.New("secondary rate limit")
+		}
+		return nil
+	}
+	spec := baseSpec()
+	spec.BatchSize = 2
+	err := Apply(context.Background(), run, fiveRepoSelection(), spec, "t")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "batch 2/3")
+	assert.Contains(t, err.Error(), "rate limit")
+}
+
+func TestChunk(t *testing.T) {
+	repos := fiveRepoSelection().Repos
+	assert.Len(t, chunk(repos, 0), 1, "size 0 = single chunk")
+	assert.Len(t, chunk(repos, 10), 1, "size >= len = single chunk")
+	assert.Len(t, chunk(repos, 2), 3)
+	assert.Len(t, chunk(repos, 1), 5)
 }
 
 func TestShellQuoteEscapesSingleQuote(t *testing.T) {

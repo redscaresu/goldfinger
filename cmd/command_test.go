@@ -9,10 +9,13 @@ import (
 )
 
 // executeCmd runs the root command with the given token and args, capturing
-// combined output. A token of "" simulates a missing PAT.
+// combined output. A token of "" simulates a missing PAT. The local gh fallback
+// is stubbed off so tests exercise the env-var path deterministically, without
+// depending on whether the test host happens to be logged into gh.
 func executeCmd(t *testing.T, token string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv(tokenEnvVar, token)
+	stubGhToken(t, "", false)
 	root := newRootCmd()
 	var buf bytes.Buffer
 	root.SetOut(&buf)
