@@ -253,17 +253,27 @@ goldfinger apply  --name payments -- sed -i '…' Dockerfile
 
 ## Install
 
-goldfinger itself:
+goldfinger itself — a prebuilt binary is the quickest path (no Go needed):
 
 ```sh
-# from source
-go install github.com/redscaresu/goldfinger/cmd@latest   # installs `goldfinger`
+# linux/darwin × amd64/arm64 are attached to every release; macOS arm64 shown:
+curl -sSfL -o goldfinger \
+  https://github.com/redscaresu/goldfinger/releases/latest/download/goldfinger-darwin-arm64
+chmod +x goldfinger && sudo mv goldfinger /usr/local/bin/
+goldfinger --version   # -> goldfinger version v0.1.0
+```
+
+Each release also ships a `SHA256SUMS`; verify a download with
+`shasum -a 256 -c SHA256SUMS`. Browse builds at
+[Releases](https://github.com/redscaresu/goldfinger/releases).
+
+Or install from source with Go:
+
+```sh
+go install github.com/redscaresu/goldfinger/cmd@v0.1.0   # or @latest
 # or build the repo
 git clone https://github.com/redscaresu/goldfinger && cd goldfinger && make build  # -> bin/goldfinger
 ```
-
-Release builds for linux/darwin × amd64/arm64 are attached to each tagged
-release on GitHub.
 
 The two tools goldfinger drives (both Go, install with `go install`):
 
@@ -297,7 +307,8 @@ the operator playbook.
 
 ## Requirements
 
-- **Go** (to build goldfinger).
+- **Go** — only to build goldfinger from source; the prebuilt release binaries
+  need no Go.
 - **ghorg** and **multi-gitter** on `PATH`. goldfinger checks for them and prints
   install instructions if missing.
 - A **git identity** (`git config user.name` / `user.email`) — multi-gitter
