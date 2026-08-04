@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redscaresu/goldfinger/mirror"
 	"github.com/redscaresu/goldfinger/models"
@@ -15,17 +16,57 @@ import (
 )
 
 func TestResolveWorkspaceDefault(t *testing.T) {
-	ws, err := resolveWorkspace("")
+	ws, err := resolveWorkspace("", "", "")
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(ws))
 	assert.True(t, strings.HasSuffix(ws, "goldfinger"))
 }
 
 func TestResolveWorkspaceRelativeBecomesAbsolute(t *testing.T) {
-	ws, err := resolveWorkspace("some/dir")
+	ws, err := resolveWorkspace("some/dir", "", "")
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(ws))
 	assert.True(t, strings.HasSuffix(ws, filepath.Join("some", "dir")))
+}
+
+func TestResolveWorkspacePurposeIsTimestamped(t *testing.T) {
+	orig := nowFunc
+	nowFunc = func() time.Time { return time.Date(2026, 8, 4, 13, 20, 45, 123000000, time.UTC) }
+	defer func() { nowFunc = orig }()
+
+	ws, err := resolveWorkspace("", "keyv-cve", "")
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(ws))
+	// goldfinger stamps the time to the millisecond; the operator supplied only
+	// the purpose, so each run gets its own pristine dir.
+	assert.True(t, strings.HasSuffix(ws, filepath.Join("goldfinger", "keyv-cve-2026-08-04-132045.123")),
+		"want ~/goldfinger/keyv-cve-2026-08-04-132045.123, got %s", ws)
+}
+
+func TestResolveWorkspacePurposeFoldsInBranch(t *testing.T) {
+	orig := nowFunc
+	nowFunc = func() time.Time { return time.Date(2026, 8, 4, 13, 20, 45, 123000000, time.UTC) }
+	defer func() { nowFunc = orig }()
+
+	// A branch with a slash must fold into a single safe path segment.
+	ws, err := resolveWorkspace("", "keyv-cve", "feature/x")
+	require.NoError(t, err)
+	assert.True(t, strings.HasSuffix(ws, filepath.Join("goldfinger", "keyv-cve-feature-x-2026-08-04-132045.123")),
+		"want ~/goldfinger/keyv-cve-feature-x-2026-08-04-132045.123, got %s", ws)
+}
+
+func TestResolveWorkspacePurposeAndWorkspaceMutuallyExclusive(t *testing.T) {
+	_, err := resolveWorkspace("/some/ws", "keyv-cve", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
+func TestResolveWorkspaceRejectsUnsafePurpose(t *testing.T) {
+	for _, p := range []string{"../etc", "a/b", "has space", "..", "with\\slash"} {
+		_, err := resolveWorkspace("", p, "")
+		require.Error(t, err, "purpose %q should be rejected", p)
+		assert.Contains(t, err.Error(), "--purpose")
+	}
 }
 
 func TestRequireToolMissing(t *testing.T) {

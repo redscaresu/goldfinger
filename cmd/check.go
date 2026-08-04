@@ -1,0 +1,106 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"time"
+
+	"github.com/redscaresu/goldfinger/client"
+	"github.com/redscaresu/goldfinger/discovery"
+	"github.com/redscaresu/goldfinger/models"
+	"github.com/redscaresu/goldfinger/selection"
+	"github.com/spf13/cobra"
+)
+
+func newCheckCmd() *cobra.Command {
+	var (
+		selectionPath string
+		name          string
+	)
+	cmd := &cobra.Command{
+		Use:   "check",
+		Short: "Report whether a selection has drifted from live discovery",
+		Long: "check re-runs discovery using the selection's own frozen filter and " +
+			"diffs the result against the lockfile — reporting repos added, removed " +
+			"(with a reason), whose default branch has moved, or whose owner type has " +
+			"flipped since it was resolved.\n\n" +
+			"It is read-only: it never rewrites the lockfile (re-run `select` to " +
+			"refresh) and never touches mirror or apply. Exit status is 0 in sync, " +
+			"1 when drift is found, and 2 on error — usable as a CI gate.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			token, source, err := resolveToken(cmd.Context())
+			if err != nil {
+				return err
+			}
+			announceTokenSource(cmd.ErrOrStderr(), source)
+			path, err := resolveSelectionPath(name, selectionPath)
+			if err != nil {
+				return err
+			}
+			sel, err := selection.Read(path)
+			if err != nil {
+				return err
+			}
+			c, err := client.New(token)
+			if err != nil {
+				return err
+			}
+			return runCheck(cmd.Context(), c, sel, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+	addSelectionFlags(cmd, &name, &selectionPath)
+	return cmd
+}
+
+// runCheck resolves live discovery for the selection's owner, applies the
+// selection's own frozen filter, and reports drift against the lockfile. It is
+// the testable core of the check command. It returns an exitError with code 1
+// when drift is found so the process exits non-zero (for CI) without printing an
+// error — the drift report itself has already gone to stdout.
+func runCheck(ctx context.Context, r repoResolver, sel models.Selection, out, errOut io.Writer) error {
+	banner(errOut, "Checking selection for "+sel.Owner+" against live discovery")
+	if _, err := r.Verify(ctx); err != nil {
+		return fmt.Errorf("verifying token: %w", err)
+	}
+	raw, liveOwnerType, err := r.ListRepos(ctx, sel.Owner)
+	if err != nil {
+		return err
+	}
+	live := discovery.Select(raw, discovery.Filter{AllRepos: sel.Filter.AllRepos, Topics: sel.Filter.Topics})
+	diff := discovery.Compare(sel.Repos, live, raw)
+
+	// Owner type is compared here rather than inside discovery.Compare so that
+	// function stays a pure repos-only diff. It matters because mirror passes the
+	// owner type to ghorg as --clone-type; a user<->org flip breaks mirroring.
+	ownerTypeMoved := sel.OwnerType != "" && liveOwnerType != "" && sel.OwnerType != liveOwnerType
+
+	if diff.Empty() && !ownerTypeMoved {
+		done(errOut, fmt.Sprintf("selection is in sync with live discovery (%d repo(s))", len(sel.Repos)))
+		return nil
+	}
+	renderDrift(out, sel, diff, ownerTypeMoved, liveOwnerType)
+	return exitError{code: 1}
+}
+
+// renderDrift writes the human-readable drift report to out. Data goes to stdout
+// so it can be piped or diffed; the banner/summary framing lives on stderr.
+func renderDrift(out io.Writer, sel models.Selection, diff discovery.Diff, ownerTypeMoved bool, liveOwnerType string) {
+	fmt.Fprintf(out, "selection drift vs live discovery (resolved %s):\n", sel.ResolvedAt.Format(time.RFC3339))
+	for _, r := range diff.Added {
+		fmt.Fprintf(out, "  + %s\tadded, matches the selection filter\n", r.FullName())
+	}
+	for _, rm := range diff.Removed {
+		fmt.Fprintf(out, "  - %s\t%s\n", rm.Repo.FullName(), rm.Reason)
+	}
+	for _, bc := range diff.DefaultBranchMoved {
+		fmt.Fprintf(out, "  ~ %s\tdefault branch moved: %s -> %s\n", bc.Repo.FullName(), bc.Was, bc.Now)
+	}
+	if ownerTypeMoved {
+		fmt.Fprintf(out, "  ! owner type changed: %s -> %s\n", sel.OwnerType, liveOwnerType)
+	}
+	// Unchanged = locked repos still selected with an unchanged default branch.
+	unchanged := len(sel.Repos) - len(diff.Removed) - len(diff.DefaultBranchMoved)
+	fmt.Fprintf(out, "summary: %d unchanged, %d added, %d removed, %d branch moved\n",
+		unchanged, len(diff.Added), len(diff.Removed), len(diff.DefaultBranchMoved))
+}

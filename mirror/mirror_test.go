@@ -164,6 +164,18 @@ func TestMirrorNoClean(t *testing.T) {
 	assert.Contains(t, cap.args, "--no-clean")
 }
 
+func TestMirrorBranch(t *testing.T) {
+	var cap capture
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{}))
+	for _, a := range cap.args {
+		assert.NotContains(t, a, "--branch", "omitted by default so ghorg uses each repo's default")
+	}
+
+	cap = capture{}
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{Branch: "dev"}))
+	assert.Contains(t, cap.args, "--branch=dev")
+}
+
 func TestMirrorEmptySelection(t *testing.T) {
 	err := Mirror(context.Background(), func(context.Context, string, []string, []string) error {
 		t.Fatal("runner should not be called for an empty selection")
