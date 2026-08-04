@@ -9,7 +9,7 @@ import (
 )
 
 // addSelectionFlags binds the --name / --selection flags shared by select,
-// mirror, and apply.
+// mirror, apply, and check.
 func addSelectionFlags(cmd *cobra.Command, name, path *string) {
 	f := cmd.Flags()
 	f.StringVar(name, "name", "", "named selection in the registry (~/.config/goldfinger/selections)")

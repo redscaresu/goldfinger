@@ -46,6 +46,18 @@ WORKFLOW
      With --base-branch omitted, each PR targets that repo's own default branch,
      so a mixed dev/main selection routes correctly per repo.
 
+DRIFT CHECK
+  A selection is frozen at select time; the world moves on. Before a big mirror
+  or apply, confirm the lockfile still matches reality:
+       goldfinger check
+       goldfinger check --name platform
+  It re-runs discovery using the selection's OWN recorded filter and diffs the
+  result against the lockfile — reporting repos added (+), removed with a reason
+  (-), whose default branch has moved (~), or whose owner type has flipped (!).
+  It is read-only: it never rewrites the lockfile (re-run `select` to refresh)
+  and never re-runs discovery inside mirror/apply. Exit status makes it a CI
+  gate: 0 in sync, 1 drift found, 2 error.
+
 NAMED SELECTIONS
   By default a selection is ./goldfinger.selection. To keep several standing
   cohorts, name them: `select --name platform ...` stores it in a registry
