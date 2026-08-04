@@ -165,6 +165,19 @@ on its default branch where that branch is absent, so it's a best-effort "prefer
 `dev` where it exists", not a per-repo guarantee (the lockfile records each
 repo's own default branch for that).
 
+`--branch` and `--clone-depth` are **incompatible** — goldfinger refuses the
+combination. A shallow clone (`--clone-depth 1`) only fetches each repo's
+**default** branch, so `mirror --branch dev --clone-depth 1` would silently leave
+every repo where `dev` isn't the default on its default branch: a false-coverage
+trap. Omit `--clone-depth` (full depth) when mirroring a non-default `--branch`;
+shallow stays fine for a plain default-branch scan.
+
+The resolved workspace path is printed as a bare absolute path to **stdout**
+(banners and ghorg's own output go to **stderr**), so a script can capture it —
+`ws=$(goldfinger mirror --purpose keyv-cve 2>mirror.log)` — instead of globbing
+for the millisecond-stamped dir. Because the path prints before ghorg runs, check
+the exit code (not stdout) to confirm the clone succeeded.
+
 **For a one-off mass-PR campaign, use `--purpose` for an ephemeral, timestamped
 workspace** — you supply the purpose, goldfinger stamps the time to the
 millisecond so each run gets its own pristine dir:

@@ -10,11 +10,13 @@ import (
 
 // execRun is the real command runner passed to the mirror/apply wrappers. It
 // streams the child tool's output straight through so the user sees ghorg's and
-// multi-gitter's progress live.
+// multi-gitter's progress live. The child's stdout is deliberately routed to our
+// stderr: goldfinger reserves its own stdout for machine-readable output (the
+// mirror workspace path), so a delegate's chatter must never contaminate it.
 func execRun(ctx context.Context, name string, args, env []string) error {
 	c := exec.CommandContext(ctx, name, args...)
 	c.Env = env
-	c.Stdout = os.Stdout
+	c.Stdout = os.Stderr
 	c.Stderr = os.Stderr
 	c.Stdin = os.Stdin
 	return c.Run()

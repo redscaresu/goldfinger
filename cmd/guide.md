@@ -39,6 +39,13 @@ WORKFLOW
      repo on its default branch where that branch is absent (best-effort "prefer
      dev where it exists", not a per-repo guarantee).
 
+     Do NOT combine --branch with --clone-depth: a shallow clone
+     (--clone-depth 1) fetches only each repo's default branch, so
+     `mirror --branch dev --clone-depth 1` would leave repos on their default
+     wherever dev exists but isn't the default — a silent coverage gap.
+     goldfinger refuses that combination; omit --clone-depth (full depth) when
+     you pass --branch. Shallow is fine for a plain default-branch scan.
+
      For a one-off mass-PR campaign, use --purpose for an ephemeral, timestamped
      workspace: you supply the purpose, goldfinger stamps the time to the
      millisecond so each run gets its own pristine dir —
