@@ -26,6 +26,11 @@ class Goldfinger < Formula
   version "${ver}"
   license "Apache-2.0"
 
+  # goldfinger orchestrates these two CLIs (it shells out to them on PATH); both
+  # are in homebrew-core, so a formula install pulls them in automatically.
+  depends_on "ghorg"
+  depends_on "multi-gitter"
+
   on_macos do
     on_arm do
       url "$(url darwin-arm64)"

@@ -406,7 +406,9 @@ curl -sSfL https://raw.githubusercontent.com/redscaresu/goldfinger/main/install.
 goldfinger --version   # -> goldfinger version v0.2.0
 ```
 
-Or, with Homebrew on macOS/Linux:
+Or, with Homebrew on macOS/Linux — this also pulls in `ghorg` and `multi-gitter`
+automatically (they're `depends_on` in the formula), so there's nothing else to
+install:
 
 ```sh
 brew install redscaresu/tap/goldfinger
@@ -437,7 +439,9 @@ go install github.com/redscaresu/goldfinger/cmd@v0.2.0   # or @latest
 git clone https://github.com/redscaresu/goldfinger && cd goldfinger && make build  # -> bin/goldfinger
 ```
 
-The two tools goldfinger drives (both Go, install with `go install`):
+The two tools goldfinger drives (the Homebrew install above already pulls these
+in; only needed with the non-brew install methods — both Go, install with
+`go install`):
 
 ```sh
 go install github.com/gabrie30/ghorg@latest
