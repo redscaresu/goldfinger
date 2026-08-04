@@ -64,7 +64,7 @@ WORKFLOW
 
   3. Apply — run a change across the selection and open PRs:
        goldfinger apply --branch bump --commit-message "msg" --pr-title "title" \
-         -- sed -i 's|old|new|g' Dockerfile
+         --sign local -- sed -i 's|old|new|g' Dockerfile
      The command after -- runs in each repo's checkout (via multi-gitter), on
      your machine — keep it portable (`sed -i` differs on macOS/BSD). For
      non-trivial or per-file edits, pass a script: `-- python3 /abs/migrate.py`.
@@ -76,6 +76,24 @@ WORKFLOW
      the real diff rather than trusting the snapshot you inspected.
      With --base-branch omitted, each PR targets that repo's own default branch,
      so a mixed dev/main selection routes correctly per repo.
+
+SIGNING (--sign, REQUIRED — no default)
+  Every apply must state how commits are signed. There is no default on purpose:
+  commit provenance is too important to leave implicit for a fleet-wide change.
+  Three modes, three trust models — the dry-run banner spells out which one is
+  in effect:
+  - --sign local  : real git binary (multi-gitter --git-type=cmd) → signed with
+                     YOUR GPG key, honouring ~/.gitconfig commit.gpgsign /
+                     user.signingkey. "Verified" on GitHub only if that public
+                     key is uploaded. Your gpg-agent must have the passphrase
+                     cached for the whole run — a cold/headless agent can stall
+                     on per-commit pinentry, so warm it first. (multi-gitter's
+                     docs don't explicitly promise --git-type=cmd honours
+                     commit.gpgsign; verify once on a throwaway repo.)
+  - --sign github : GitHub API push (multi-gitter --api-push) → signed by
+                     GitHub's web-flow key, always "Verified", no local key.
+                     GitHub-only, slower, unsuited to large files.
+  - --sign none   : UNSIGNED (multi-gitter default go-git). Explicit opt-out.
 
 DRIFT CHECK
   A selection is frozen at select time; the world moves on. Before a big mirror
@@ -104,6 +122,9 @@ SAFETY — READ THIS
     may run it — but dry-run first, present the diff, prefer --draft (PRs open
     not-ready-for-review), and pass --dry-run=false --confirm. Otherwise present
     the dry-run result and let the human run the real apply themselves.
+  - --sign is required on every run: pass it explicitly and state which trust
+    model you used (local = your GPG key, github = GitHub's key, none = unsigned)
+    when you present the dry-run or a real run.
 
 NOTES FOR AI AGENTS
   - The selection lockfile is JSON — read it directly for structured state.

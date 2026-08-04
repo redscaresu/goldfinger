@@ -94,13 +94,13 @@ goldfinger mirror
 # for a one-off campaign, get an ephemeral timestamped snapshot instead:
 #   goldfinger mirror --purpose bump-go   # -> ~/goldfinger/bump-go-<timestamp>/<owner>/
 
-# 3. dry-run the change — shows the diff, opens nothing
+# 3. dry-run the change — shows the diff, opens nothing (--sign is always required)
 goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
-  -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
+  --sign local -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 
 # 4. for real — opens the PRs (requires both flags)
 goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
-  --dry-run=false --confirm -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
+  --sign local --dry-run=false --confirm -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 ```
 
 `goldfinger guide` prints this playbook from the binary itself.
@@ -208,6 +208,7 @@ Reads the lockfile and runs a change across exactly that set via multi-gitter.
 goldfinger apply --branch bump-go-1.24 \
   --commit-message "Bump golang base image to 1.24" \
   --pr-title "Bump golang base image to 1.24" \
+  --sign local \
   -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 ```
 
@@ -236,6 +237,27 @@ rather than trusting the mirror snapshot. (`check` catches *selection* drift, no
 - Other PR options: `--pr-body` (or `--pr-body-file <path>` to load a long body
   from a file — the two are mutually exclusive), `--label` / `--reviewer`
   (repeatable), `--draft`.
+- **Signing (`--sign`, required — no default).** Every run must state how commits
+  are signed; there is deliberately no default, because commit provenance is not
+  a safe thing to leave implicit for a fleet-wide, hard-to-reverse action. Three
+  modes, each with a different trust model:
+  - `--sign local` — runs the change through the real `git` binary
+    (multi-gitter `--git-type=cmd`), so your `~/.gitconfig` `commit.gpgsign` /
+    `user.signingkey` apply and each commit is signed with **your own GPG key**.
+    It shows as "Verified" on GitHub only if that public key is uploaded to your
+    account. Trade-offs: your `gpg-agent` must have the passphrase cached for the
+    whole run — a cold or kicked agent (e.g. a headless/background session) can
+    stall on per-commit `pinentry`; warm it first (`echo test | gpg --clearsign
+    >/dev/null`). *Caveat: multi-gitter's docs confirm `--git-type=cmd` shells
+    out to `git` but don't explicitly promise it honours `commit.gpgsign` —
+    verify once against a throwaway repo before trusting it for a real fleet run.*
+  - `--sign github` — pushes commits through the GitHub API (multi-gitter
+    `--api-push`), signed by **GitHub's own web-flow key** (always "Verified", no
+    local key or `pinentry`). GitHub-only, slower, and **unsuited to large
+    files** — and it interacts with the same secondary rate limits as PR creation
+    (see below).
+  - `--sign none` — **unsigned** commits (multi-gitter's default `go-git` path).
+    An explicit, deliberate opt-out; the dry-run banner flags it loudly.
 - **Safety:** `apply` defaults to `--dry-run` (shows the change, opens nothing). A
   real run requires **both** `--dry-run=false` **and** `--confirm` — the guard
   against an accidental fleet-wide PR blast. A real run should always follow a

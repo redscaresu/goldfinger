@@ -274,6 +274,32 @@ func TestApplyBatchErrorReportsBatchNumber(t *testing.T) {
 	assert.Contains(t, err.Error(), "rate limit")
 }
 
+func TestApplySignModeArgs(t *testing.T) {
+	tests := []struct {
+		mode      string
+		wantArg   string   // the flag that must be present ("" = none of the below)
+		absentArg []string // flags that must NOT be present
+	}{
+		{models.SignGitHub, "--api-push", []string{"--git-type=cmd"}},
+		{models.SignLocal, "--git-type=cmd", []string{"--api-push"}},
+		{models.SignNone, "", []string{"--api-push", "--git-type=cmd"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			var cap capture
+			spec := baseSpec()
+			spec.Sign = tt.mode
+			require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t"))
+			if tt.wantArg != "" {
+				assert.Contains(t, cap.args, tt.wantArg)
+			}
+			for _, a := range tt.absentArg {
+				assert.NotContains(t, cap.args, a)
+			}
+		})
+	}
+}
+
 func TestChunk(t *testing.T) {
 	repos := fiveRepoSelection().Repos
 	assert.Len(t, chunk(repos, 0), 1, "size 0 = single chunk")

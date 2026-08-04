@@ -37,6 +37,11 @@ it does not reimplement mirroring or PR-fanout.
   run **only when the human has explicitly authorized this specific fleet
   change** — and then must dry-run first, present the diff, and prefer `--draft`.
   Absent explicit authorization, the real run is the human's to execute.
+- `apply` requires `--sign` on **every** run (`local` = the operator's own GPG
+  key via the git binary, `github` = GitHub's web-flow key via the API, `none` =
+  unsigned) — there is no default. An agent must pass it explicitly and state
+  which mode it used and that mode's trust model when presenting a dry-run or a
+  real run; never silently pick one.
 - The selection lockfile is authoritative: `mirror` and `apply` read it and must
   never re-run discovery — so "the repos I mirror" and "the repos I change" are
   provably the same set, which is the whole product.
