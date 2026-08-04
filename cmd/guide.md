@@ -110,9 +110,10 @@ SIGNING (--sign, REQUIRED — no default)
                      user.signingkey. "Verified" on GitHub only if that public
                      key is uploaded. Your gpg-agent must have the passphrase
                      cached for the whole run — a cold/headless agent can stall
-                     on per-commit pinentry, so warm it first. (multi-gitter's
-                     docs don't explicitly promise --git-type=cmd honours
-                     commit.gpgsign; verify once on a throwaway repo.)
+                     on per-commit pinentry, so warm it first. (--git-type=cmd
+                     runs `git commit` with no -S and no --no-gpg-sign, so your
+                     commit.gpgsign config is honoured — verified against
+                     multi-gitter v0.63.1.)
   - --sign github : GitHub API push (multi-gitter --api-push) → signed by
                      GitHub's web-flow key, always "Verified", no local key.
                      GitHub-only, slower, unsuited to large files.

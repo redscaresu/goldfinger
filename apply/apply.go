@@ -144,16 +144,17 @@ func signArgs(mode string) []string {
 		// files.
 		return []string{"--api-push"}
 	case models.SignLocal:
-		// --git-type=cmd runs the real git binary, so the operator's ~/.gitconfig
-		// commit.gpgsign / user.signingkey apply and commits are signed with their
-		// own GPG key.
+		// --git-type=cmd makes multi-gitter commit via the real git binary:
+		// `git add .` then `git commit --no-verify -m <msg>` (multi-gitter
+		// v0.63.1, internal/git/cmdgit). It passes no -S and no --no-gpg-sign, so
+		// git honours the operator's ~/.gitconfig commit.gpgsign / user.signingkey
+		// and signs with their own GPG key. Verified empirically against v0.63.1.
 		//
-		// TODO(verify): multi-gitter's docs confirm --git-type=cmd shells out to
-		// the git binary but do NOT explicitly state it honours commit.gpgsign.
-		// This must be verified empirically before relying on --sign=local. If it
-		// turns out not to sign, switch this to multi-gitter's documented
-		// --manual-commit and have the apply script run `git commit -S` itself
-		// (charter-safe: the operator's script runs git, not goldfinger).
+		// This holds ONLY because goldfinger never passes --author-name /
+		// --author-email: multi-gitter reduces the commit's env to just
+		// GIT_AUTHOR/COMMITTER_* when an author is set, stripping HOME/GPG_TTY and
+		// breaking signing. Do not add author flags to buildArgs without
+		// re-verifying.
 		return []string{"--git-type=cmd"}
 	default:
 		// SignNone: no signing flag, multi-gitter's default go-git (unsigned) path.
