@@ -28,6 +28,13 @@ WORKFLOW
      Writes ./goldfinger.selection (JSON: owner/name list + provenance) and
      prints the set. --org accepts a GitHub org OR user.
 
+     If you plan to `mirror --branch <b>` (e.g. dev), add `--branch-presence <b>`
+     here so goldfinger records (read-only) which repos actually have that branch
+     and freezes it into the lockfile — the later mirror report then tells you
+     which repos fall back to their default instead of silently missing the
+     branch. These facts are recorded at selection time and can drift; re-select
+     to refresh.
+
   2. Mirror — clone the selection locally (OPTIONAL — for reading/scanning the
      fleet; NOT needed to open PRs. apply clones on its own, see step 3):
        goldfinger mirror
@@ -45,6 +52,15 @@ WORKFLOW
      wherever dev exists but isn't the default — a silent coverage gap.
      goldfinger refuses that combination; omit --clone-depth (full depth) when
      you pass --branch. Shallow is fine for a plain default-branch scan.
+
+     To see which repos got the branch vs fell back, add --report-json (prints a
+     JSON report to stdout instead of the bare workspace-path line) or
+     --write-report (writes <workspace>/goldfinger-mirror.json, only on a
+     successful mirror). The report is built from the lockfile alone (no git, no
+     re-discovery): it lists each repo's branchStatus as has-branch /
+     falls-back-to-default / unknown. "unknown" means the branch wasn't checked
+     at select time (run select --branch-presence <b> first) — goldfinger does
+     NOT guess. Branch facts are recorded at selection time and can drift.
 
      For a one-off mass-PR campaign, use --purpose for an ephemeral, timestamped
      workspace: you supply the purpose, goldfinger stamps the time to the

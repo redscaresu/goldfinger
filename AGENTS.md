@@ -50,7 +50,10 @@ it does not reimplement mirroring or PR-fanout.
   real run; never silently pick one.
 - The selection lockfile is authoritative: `mirror` and `apply` read it and must
   never re-run discovery — so "the repos I mirror" and "the repos I change" are
-  provably the same set, which is the whole product.
+  provably the same set, which is the whole product. The `mirror` report is built
+  from the lockfile alone (no `git`, no re-discovery): branch presence is a fact
+  **recorded at selection time** (`select --branch-presence`) and can drift, so a
+  branch never checked reports `unknown` — do not add code that guesses it.
 - Tokens go to child tools via their env vars (`GHORG_GITHUB_TOKEN`,
   `GITHUB_TOKEN`), never argv. Tests assert no token appears in argv.
 - Flat packages (`cmd/`, `models/`, `client/`, `discovery/`, `selection/`,

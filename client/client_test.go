@@ -117,6 +117,38 @@ func TestListReposAuthenticatedOwnerPath(t *testing.T) {
 	assert.Equal(t, "me/private-thing", repos[0].FullName())
 }
 
+func TestBranchExists(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/svc/branches/dev", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"name":"dev"}`)
+	})
+	mux.HandleFunc("/repos/acme/svc/branches/absent", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Branch not found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/repos/acme/svc/branches/boom", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
+	})
+	c := newTestClient(t, mux)
+
+	t.Run("present branch is true", func(t *testing.T) {
+		has, err := c.BranchExists(context.Background(), "acme", "svc", "dev")
+		require.NoError(t, err)
+		assert.True(t, has)
+	})
+
+	t.Run("404 is false without error", func(t *testing.T) {
+		has, err := c.BranchExists(context.Background(), "acme", "svc", "absent")
+		require.NoError(t, err)
+		assert.False(t, has)
+	})
+
+	t.Run("other errors propagate", func(t *testing.T) {
+		_, err := c.BranchExists(context.Background(), "acme", "svc", "boom")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "acme/svc@boom")
+	})
+}
+
 func TestListReposPropagatesError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/ghost", func(w http.ResponseWriter, r *http.Request) {

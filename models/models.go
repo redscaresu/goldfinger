@@ -12,11 +12,32 @@ type Repo struct {
 	DefaultBranch string   `json:"defaultBranch"`
 	Topics        []string `json:"topics,omitempty"`
 	Archived      bool     `json:"archived,omitempty"`
+
+	// BranchPresence records, per branch name checked at selection time via
+	// read-only REST (`select --branch-presence`), whether that branch existed on
+	// this repo. It is a frozen fact recorded at selection time and can drift
+	// afterwards; an absent entry means the branch was never checked, so callers
+	// must treat it as "unknown" and never guess.
+	BranchPresence map[string]bool `json:"branchPresence,omitempty"`
 }
 
 // FullName returns the canonical "owner/name" identifier.
 func (r Repo) FullName() string {
 	return r.Owner + "/" + r.Name
+}
+
+// RecordedBranch reports what the selection knows about branch on this repo.
+// known is false when the branch was not checked at selection time (an old v1
+// lockfile, or a branch never passed to `select --branch-presence`) — callers
+// must not guess in that case. has is whether the branch was present. A branch
+// equal to the repo's own DefaultBranch is always present and known without any
+// recorded fact.
+func (r Repo) RecordedBranch(branch string) (has, known bool) {
+	if branch != "" && branch == r.DefaultBranch {
+		return true, true
+	}
+	has, known = r.BranchPresence[branch]
+	return has, known
 }
 
 // TokenEnvVar is the environment variable goldfinger reads the operator's
@@ -38,8 +59,11 @@ type SelectionFilter struct {
 	Topics   []string `json:"topics,omitempty"`
 }
 
-// SelectionVersion is the current lockfile schema version.
-const SelectionVersion = 1
+// SelectionVersion is the current lockfile schema version. v2 added per-repo
+// branch-presence facts (Repo.BranchPresence) and the list of branch names
+// checked at selection time (Selection.BranchesChecked); v1 lockfiles carry
+// neither and read back with "unknown" branch facts.
+const SelectionVersion = 2
 
 // Signing modes for a real apply run. There is no default: a real run must
 // state its signing intent explicitly, because commit provenance is not a safe
@@ -98,4 +122,10 @@ type Selection struct {
 	ResolvedAt time.Time       `json:"resolvedAt"`
 	Tool       string          `json:"tool"`
 	Repos      []Repo          `json:"repos"`
+
+	// BranchesChecked lists the branch names whose presence was recorded at
+	// selection time (via `select --branch-presence`). A repo's BranchPresence
+	// map holds one entry per name here; a name equal to the repo's own default
+	// branch is recorded as present without an API call.
+	BranchesChecked []string `json:"branchesChecked,omitempty"`
 }

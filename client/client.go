@@ -7,6 +7,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/google/go-github/v89/github"
 	"github.com/redscaresu/goldfinger/models"
@@ -91,6 +92,22 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, st
 		})
 	})
 	return repos, models.OwnerUser, err
+}
+
+// BranchExists reports whether branch exists on owner/repo, via a read-only
+// GET of the branch. A 404 means the branch is absent (false, no error); any
+// other API error propagates so callers never mistake a transient failure for
+// "branch missing". It mutates nothing — like the rest of this client, writes
+// are multi-gitter's job.
+func (c *Client) BranchExists(ctx context.Context, owner, repo, branch string) (bool, error) {
+	_, resp, err := c.gh.Repositories.GetBranch(ctx, owner, repo, branch, 0)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, fmt.Errorf("check branch %s/%s@%s: %w", owner, repo, branch, err)
+	}
+	return true, nil
 }
 
 // paginate walks every page of a repo listing, following NextPage, and maps
