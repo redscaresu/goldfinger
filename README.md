@@ -225,8 +225,7 @@ touching a clone:
 repo's own default), `falls-back-to-default` (absent at select time, so ghorg
 stays on the default), or `unknown` (the branch was never checked at select time
 — an old lockfile, or no `--branch-presence` for it; goldfinger does **not**
-guess). With no `--branch`, every repo reports `default-branch`. Because the
-facts are recorded at selection time, they can drift; re-`select` to refresh.
+guess). With no `--branch`, every repo reports `default-branch`.
 
 **For a one-off mass-PR campaign, use `--purpose` for an ephemeral, timestamped
 workspace** — you supply the purpose, goldfinger stamps the time to the
@@ -311,9 +310,11 @@ rather than trusting the mirror snapshot. (`check` catches *selection* drift, no
     account. Trade-offs: your `gpg-agent` must have the passphrase cached for the
     whole run — a cold or kicked agent (e.g. a headless/background session) can
     stall on per-commit `pinentry`; warm it first (`echo test | gpg --clearsign
-    >/dev/null`). *Caveat: multi-gitter's docs confirm `--git-type=cmd` shells
-    out to `git` but don't explicitly promise it honours `commit.gpgsign` —
-    verify once against a throwaway repo before trusting it for a real fleet run.*
+    >/dev/null`). *(Verified against multi-gitter v0.63.1: `--git-type=cmd` runs
+    `git commit` with no `-S` and no `--no-gpg-sign`, so your `commit.gpgsign`
+    config is what signs the commit. This relies on goldfinger not passing
+    `--author-name`/`--author-email`, which would strip the commit's environment
+    and break signing.)*
   - `--sign github` — pushes commits through the GitHub API (multi-gitter
     `--api-push`), signed by **GitHub's own web-flow key** (always "Verified", no
     local key or `pinentry`). GitHub-only, slower, and **unsuited to large
@@ -447,12 +448,10 @@ the operator playbook.
   install instructions if missing.
 - A **git identity** (`git config user.name` / `user.email`) — multi-gitter
   authors the `apply` commit from it.
-- **A GitHub token** for API discovery, mapped to the env vars ghorg
-  (`GHORG_GITHUB_TOKEN`) and multi-gitter (`GITHUB_TOKEN`) expect, so you set one
-  token, not three. By default goldfinger reuses your local `gh auth login`
-  session automatically — nothing to set. Setting `GOLD_FINGER_PAT` overrides
-  that and is the fallback when you have no local gh login or you're running in
-  CI.
+- **A GitHub token** for API discovery. goldfinger reuses your local
+  `gh auth login` session by default and maps the token to the env vars ghorg
+  (`GHORG_GITHUB_TOKEN`) and multi-gitter (`GITHUB_TOKEN`) expect; set
+  `GOLD_FINGER_PAT` when there's no local gh login, such as in CI.
 
 ## For AI agents
 
@@ -478,10 +477,3 @@ and `CLAUDE.md`.
 
 - `IMPLEMENTATION.md` — the build plan: package layout, the selection format, the
   ghorg/multi-gitter handoffs, build order, and pinned decisions.
-
-## Non-goals (v0.1)
-
-- No reimplementation of clone/pull or PR machinery (delegated by design).
-- github.com only; GHES is a later base-URL change.
-- No long-running service — the lockfile is the only persisted state, and
-  `mirror`/`apply` recompute nothing.

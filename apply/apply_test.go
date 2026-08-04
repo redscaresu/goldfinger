@@ -300,6 +300,27 @@ func TestApplySignModeArgs(t *testing.T) {
 	}
 }
 
+// TestApplyLocalSignPassesNoAuthorFlags locks the invariant that makes
+// --sign=local sign at all: multi-gitter's --git-type=cmd honours the operator's
+// commit.gpgsign ONLY while goldfinger passes no --author-name/--author-email —
+// setting an author makes multi-gitter reduce the commit's env to GIT_AUTHOR/
+// COMMITTER_* alone, stripping HOME/GPG_TTY and breaking signing. If a future
+// change adds author flags to buildArgs, this fails loudly rather than shipping
+// silently-unsigned commits under --sign=local.
+func TestApplyLocalSignPassesNoAuthorFlags(t *testing.T) {
+	var cap capture
+	spec := baseSpec()
+	spec.Sign = models.SignLocal
+	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t"))
+
+	for _, a := range cap.args {
+		assert.False(t, strings.HasPrefix(a, "--author-name"),
+			"--author-name breaks --sign=local GPG signing; got %q", a)
+		assert.False(t, strings.HasPrefix(a, "--author-email"),
+			"--author-email breaks --sign=local GPG signing; got %q", a)
+	}
+}
+
 func TestChunk(t *testing.T) {
 	repos := fiveRepoSelection().Repos
 	assert.Len(t, chunk(repos, 0), 1, "size 0 = single chunk")
