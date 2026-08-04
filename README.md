@@ -89,8 +89,10 @@ the selection a single frozen artifact that feeds both phases.
 # 1. freeze the target set -> ./goldfinger.selection
 goldfinger select --org mycompany --topic platform
 
-# 2. clone/pull them locally to grep and inspect (optional)
+# 2. clone them locally to grep and inspect (optional; not needed to open PRs)
 goldfinger mirror
+# for a one-off campaign, get an ephemeral timestamped snapshot instead:
+#   goldfinger mirror --purpose bump-go   # -> ~/goldfinger/bump-go-<timestamp>/<owner>/
 
 # 3. dry-run the change — shows the diff, opens nothing
 goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
@@ -127,7 +129,7 @@ goldfinger select --org mycompany --all-repos
   "ownerType": "Organization",
   "filter": { "topics": ["platform"] },
   "resolvedAt": "2026-08-01T15:17:53Z",
-  "tool": "goldfinger v0.1.0",
+  "tool": "goldfinger v0.2.0",
   "repos": [
     { "owner": "mycompany", "name": "billing", "cloneURL": "https://github.com/mycompany/billing.git", "defaultBranch": "main", "topics": ["platform"] }
   ]
@@ -142,6 +144,11 @@ Reads the lockfile and mirrors exactly that set locally via ghorg.
 goldfinger mirror
 ```
 
+This step is **optional**. It exists so you can read and scan the fleet locally
+(grep, run scanners, develop your change script). It is **not** required to open
+PRs — [`apply`](#goldfinger-apply) clones each repo on its own, so the two never
+share a directory.
+
 Shells out to `ghorg clone <owner> --target-repos-path=<names> --path=<workspace>`
 so ghorg clones/pulls only the selected repos into goldfinger's workspace. Re-run
 any time to refresh; ghorg pulls existing clones instead of re-cloning.
@@ -151,6 +158,40 @@ pristine reflection of upstream (local edits are discarded). Pass `--no-clean`
 to preserve local changes across re-syncs — i.e. treat the mirror as an editable
 workspace rather than a read-only reflection. Other passthroughs: `--concurrency`,
 `--clone-depth` (shallow), `--dry-run`.
+
+Pass `--branch <name>` to check out a specific branch in every clone instead of
+each repo's default. It is **one name applied to all repos**: ghorg leaves a repo
+on its default branch where that branch is absent, so it's a best-effort "prefer
+`dev` where it exists", not a per-repo guarantee (the lockfile records each
+repo's own default branch for that).
+
+**For a one-off mass-PR campaign, use `--purpose` for an ephemeral, timestamped
+workspace** — you supply the purpose, goldfinger stamps the time to the
+millisecond so each run gets its own pristine dir:
+
+```sh
+goldfinger mirror --purpose keyv-cve --clone-depth 1
+# clones into ~/goldfinger/keyv-cve-2026-08-04-132045.123/<owner>/
+# ...scan / develop the change against that snapshot...
+```
+
+Add `--branch` and it is folded into the dir name too, as
+`<purpose>-<branch>-<stamp>` (a branch's slashes become dashes):
+
+```sh
+goldfinger mirror --purpose keyv-cve --branch dev
+# clones into ~/goldfinger/keyv-cve-dev-2026-08-04-132045.123/<owner>/
+```
+
+goldfinger **never deletes** the directory — it persists so you can review it;
+remove it yourself when the campaign is done
+(`rm -rf ~/goldfinger/keyv-cve-2026-08-04-132045.123`). A fresh per-campaign clone is
+pristine by construction, so it sidesteps a trap
+long-lived clones fall into: if upstream rebases or squashes its default branch,
+a stale persistent clone can no longer fast-forward and `git pull` fails with
+exit 128. `git clean` removes untracked *files*, not *commits*, so it cannot
+recover a *diverged* clone — only a fresh clone (or a manual `git reset --hard`)
+can. The durable artifact worth keeping is the **lockfile**, not the clones.
 
 To keep the lockfile authoritative, goldfinger neutralises ambient ghorg config
 that could change the set behind your back: it strips set-narrowing/pruning
@@ -171,7 +212,15 @@ goldfinger apply --branch bump-go-1.24 \
 ```
 
 Shells out to `multi-gitter run`, passing one `--repo owner/name` per lockfile
-entry plus the script and PR flags.
+entry plus the script and PR flags. multi-gitter clones each repo into its own
+temporary directory, applies the change, pushes, and cleans up — it does **not**
+use the `mirror` workspace, so `apply` works whether or not you ran `mirror`.
+It branches from the **current HEAD of the base branch at apply time** — not the
+SHA you mirrored in step 1 — so PRs are always against live base. If a repo's
+code moves between your inspection and the apply, the change runs against the
+newer code; confirm the real diff with `--dry-run` (which also clones fresh)
+rather than trusting the mirror snapshot. (`check` catches *selection* drift, not
+*content* drift inside a repo — only the dry-run shows that.)
 
 - The command after `--` runs in each repo's checkout, **on your machine** — so
   it must be portable to your OS. `sed -i 's|…|…|g'` is a GNU-ism that fails on
@@ -260,7 +309,7 @@ goldfinger itself — a prebuilt binary is the quickest path (no Go needed):
 curl -sSfL -o goldfinger \
   https://github.com/redscaresu/goldfinger/releases/latest/download/goldfinger-darwin-arm64
 chmod +x goldfinger && sudo mv goldfinger /usr/local/bin/
-goldfinger --version   # -> goldfinger version v0.1.0
+goldfinger --version   # -> goldfinger version v0.2.0
 ```
 
 Each release also ships a `SHA256SUMS`; verify a download with
@@ -270,7 +319,7 @@ Each release also ships a `SHA256SUMS`; verify a download with
 Or install from source with Go:
 
 ```sh
-go install github.com/redscaresu/goldfinger/cmd@v0.1.0   # or @latest
+go install github.com/redscaresu/goldfinger/cmd@v0.2.0   # or @latest
 # or build the repo
 git clone https://github.com/redscaresu/goldfinger && cd goldfinger && make build  # -> bin/goldfinger
 ```

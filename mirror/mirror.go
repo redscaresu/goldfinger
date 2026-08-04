@@ -44,6 +44,7 @@ type Runner func(ctx context.Context, name string, args, env []string) error
 // Options are the passthrough knobs for a mirror run.
 type Options struct {
 	Workspace   string // ghorg --path (absolute); ghorg clones into <workspace>/<owner>
+	Branch      string // ghorg --branch: checkout this branch in every repo ("" = each repo's default)
 	Concurrency int    // 0 = ghorg default
 	CloneDepth  int    // 0 = full history
 	NoClean     bool   // skip ghorg's git-clean on existing clones, preserving local changes
@@ -93,6 +94,9 @@ func buildArgs(s models.Selection, namesFile, ignoreFile string, opts Options) [
 	}
 	if opts.Workspace != "" {
 		args = append(args, "--path="+opts.Workspace)
+	}
+	if opts.Branch != "" {
+		args = append(args, "--branch="+opts.Branch)
 	}
 	if opts.Concurrency > 0 {
 		args = append(args, "--concurrency="+strconv.Itoa(opts.Concurrency))
