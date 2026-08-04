@@ -129,7 +129,36 @@ func buildArgs(s models.Selection, spec models.ApplySpec, scriptPath, configPath
 	if spec.DryRun {
 		args = append(args, "--dry-run")
 	}
+	args = append(args, signArgs(spec.Sign)...)
 	return args
+}
+
+// signArgs maps a signing mode onto the multi-gitter flag that produces it. An
+// unrecognised mode (including SignNone) adds nothing — cmd/ validates the value
+// up front, so the default here is the safe unsigned path.
+func signArgs(mode string) []string {
+	switch mode {
+	case models.SignGitHub:
+		// --api-push commits through the GitHub API, which signs with GitHub's
+		// web-flow key (always "Verified"). GitHub-only, slower, unsuited to large
+		// files.
+		return []string{"--api-push"}
+	case models.SignLocal:
+		// --git-type=cmd runs the real git binary, so the operator's ~/.gitconfig
+		// commit.gpgsign / user.signingkey apply and commits are signed with their
+		// own GPG key.
+		//
+		// TODO(verify): multi-gitter's docs confirm --git-type=cmd shells out to
+		// the git binary but do NOT explicitly state it honours commit.gpgsign.
+		// This must be verified empirically before relying on --sign=local. If it
+		// turns out not to sign, switch this to multi-gitter's documented
+		// --manual-commit and have the apply script run `git commit -S` itself
+		// (charter-safe: the operator's script runs git, not goldfinger).
+		return []string{"--git-type=cmd"}
+	default:
+		// SignNone: no signing flag, multi-gitter's default go-git (unsigned) path.
+		return nil
+	}
 }
 
 // writeScript wraps the inline command in a POSIX script file, because

@@ -115,6 +115,7 @@ HEAD_BRANCH="$(git -C "$BDIR/$OWNER/$REPO" rev-parse --abbrev-ref HEAD)"
 echo "==> apply --dry-run (must not push a branch)"
 "$GF" apply --selection "$SELECTION" --branch "$BRANCH" \
 	--commit-message "goldfinger e2e" --pr-title "goldfinger e2e" \
+	--sign none \
 	-- sh -c "printf '%s\n' '$MARKER' >> README.md" >/dev/null
 if gh api "repos/$OWNER/$REPO/git/refs/heads/$BRANCH" >/dev/null 2>&1; then
 	fail "dry-run pushed branch $BRANCH — it must not"
@@ -123,7 +124,7 @@ fi
 echo "==> apply --dry-run=false --confirm (opens a real PR)"
 "$GF" apply --selection "$SELECTION" --branch "$BRANCH" \
 	--commit-message "goldfinger e2e" --pr-title "goldfinger e2e" \
-	--dry-run=false --confirm \
+	--sign none --dry-run=false --confirm \
 	-- sh -c "printf '%s\n' '$MARKER' >> README.md" >/dev/null
 
 echo "==> verify PR"

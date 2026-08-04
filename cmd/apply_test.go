@@ -18,6 +18,7 @@ func TestValidateApply(t *testing.T) {
 		branch:        "bump",
 		commitMessage: "bump image",
 		prTitle:       "Bump image",
+		sign:          "none",
 		script:        []string{"true"},
 	}
 	require.NoError(t, validateApply(ok))
@@ -30,6 +31,8 @@ func TestValidateApply(t *testing.T) {
 		{"missing branch", func(a *applyValidation) { a.branch = "" }, "--branch is required"},
 		{"missing commit message", func(a *applyValidation) { a.commitMessage = "" }, "--commit-message is required"},
 		{"missing pr title", func(a *applyValidation) { a.prTitle = "" }, "--pr-title is required"},
+		{"missing sign", func(a *applyValidation) { a.sign = "" }, "--sign is required"},
+		{"invalid sign", func(a *applyValidation) { a.sign = "gpg" }, "--sign \"gpg\" is invalid"},
 		{"missing script", func(a *applyValidation) { a.script = nil }, "after --"},
 	}
 	for _, tt := range tests {
@@ -100,6 +103,29 @@ func TestRunApplyPrintsPerRepoBase(t *testing.T) {
 	})
 }
 
+func TestRunApplySigningBanner(t *testing.T) {
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a"}}}
+	run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{models.SignLocal, "signed with your GPG key"},
+		{models.SignGitHub, "GitHub-verified"},
+		{models.SignNone, "UNSIGNED"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			spec := models.ApplySpec{Branch: "b", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: tt.mode}
+			var errOut bytes.Buffer
+			require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", &errOut))
+			assert.Contains(t, errOut.String(), "signing: "+tt.mode)
+			assert.Contains(t, errOut.String(), tt.want)
+		})
+	}
+}
+
 func TestResolveBase(t *testing.T) {
 	repo := models.Repo{Owner: "acme", Name: "a", DefaultBranch: "dev"}
 	assert.Equal(t, "release", resolveBase("release", repo))
@@ -145,21 +171,34 @@ func TestApplyCmdGuards(t *testing.T) {
 	})
 
 	t.Run("missing script separator", func(t *testing.T) {
-		_, err := executeCmd(t, "tok", "apply", "--branch", "b", "--commit-message", "m", "--pr-title", "t")
+		_, err := executeCmd(t, "tok", "apply", "--branch", "b", "--commit-message", "m", "--pr-title", "t", "--sign", "none")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "after --")
 	})
 
+	t.Run("missing sign is refused", func(t *testing.T) {
+		_, err := executeCmd(t, "tok", "apply", "--branch", "b", "--commit-message", "m", "--pr-title", "t", "--", "true")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--sign is required")
+	})
+
+	t.Run("invalid sign is refused", func(t *testing.T) {
+		_, err := executeCmd(t, "tok", "apply", "--branch", "b", "--commit-message", "m",
+			"--pr-title", "t", "--sign", "pgp", "--", "true")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--sign \"pgp\" is invalid")
+	})
+
 	t.Run("pr-body and pr-body-file are mutually exclusive", func(t *testing.T) {
 		_, err := executeCmd(t, "tok", "apply", "--branch", "b", "--commit-message", "m",
-			"--pr-title", "t", "--pr-body", "x", "--pr-body-file", "y.md", "--", "true")
+			"--pr-title", "t", "--sign", "none", "--pr-body", "x", "--pr-body-file", "y.md", "--", "true")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "mutually exclusive")
 	})
 
 	t.Run("real run without confirm is refused", func(t *testing.T) {
 		_, err := executeCmd(t, "tok", "apply", "--branch", "b", "--commit-message", "m",
-			"--pr-title", "t", "--dry-run=false", "--", "true")
+			"--pr-title", "t", "--sign", "none", "--dry-run=false", "--", "true")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--confirm")
 	})

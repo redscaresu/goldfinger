@@ -62,6 +62,7 @@ goldfinger apply  [--selection <path>]
                   --pr-title <title>
                   [--pr-body <body>]
                   [--label <l>...] [--reviewer <r>...] [--draft]
+                  --sign local|github|none # REQUIRED, no default: how commits are signed
                   [--dry-run]            # DEFAULT true; must pass --dry-run=false to open PRs
                   -- <command> [args...] # the per-repo script for multi-gitter
 ```
@@ -72,7 +73,9 @@ Flag rules (enforced in `cmd/` before any external call):
 - `select`: `--org` required; exactly one of `--all-repos` / `--topic`.
 - `mirror` / `apply`: the selection file must exist and parse (tell the user to
   run `select` first if not).
-- `apply`: `--branch`, `--commit-message`, `--pr-title`, and a script after `--`.
+- `apply`: `--branch`, `--commit-message`, `--pr-title`, a script after `--`, and
+  `--sign` set to one of `local` / `github` / `none` (required, no default — a
+  real run must declare its signing intent).
 
 ## Package layout
 
@@ -122,6 +125,7 @@ type ApplySpec struct {
     Labels, Reviewers []string
     Draft, DryRun     bool
     Script            []string
+    Sign              string // "local" | "github" | "none" (SignLocal/SignGitHub/SignNone)
 }
 ```
 
@@ -176,6 +180,9 @@ func Apply(ctx, s models.Selection, spec models.ApplySpec, token string) error
   `s.Repos`, plus `--branch`, `--commit-message`, `--pr-title`, and any
   `--pr-body` / `--label` / `--reviewer` / `--draft`. Adds `--dry-run` when
   `spec.DryRun`.
+- Maps `spec.Sign` onto the signing mechanism: `github` → `--api-push` (GitHub's
+  web-flow key), `local` → `--git-type=cmd` (real git binary, operator's GPG
+  key), `none` → nothing (multi-gitter's default go-git, unsigned).
 - Token via child env `GITHUB_TOKEN`.
 - **Scale caveat:** multi-gitter has no repo-list-file input, so the set is
   passed as repeated `--repo` flags. Fine for hundreds; if `len(s.Repos)` exceeds

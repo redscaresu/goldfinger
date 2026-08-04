@@ -41,6 +41,22 @@ type SelectionFilter struct {
 // SelectionVersion is the current lockfile schema version.
 const SelectionVersion = 1
 
+// Signing modes for a real apply run. There is no default: a real run must
+// state its signing intent explicitly, because commit provenance is not a safe
+// thing to leave implicit for an outward-facing, hard-to-reverse action.
+const (
+	// SignLocal maps to multi-gitter --git-type=cmd: the real git binary runs the
+	// commit, so the operator's ~/.gitconfig (commit.gpgsign / user.signingkey)
+	// applies and commits are signed with their own GPG key.
+	SignLocal = "local"
+	// SignGitHub maps to multi-gitter --api-push: commits go through the GitHub
+	// API and are signed by GitHub's web-flow key (always "Verified").
+	SignGitHub = "github"
+	// SignNone applies no signing flag: multi-gitter's default go-git path, which
+	// produces unsigned commits.
+	SignNone = "none"
+)
+
 // ApplySpec is the change to run across a selection via multi-gitter. It is
 // assembled in cmd/ from flags.
 type ApplySpec struct {
@@ -54,6 +70,11 @@ type ApplySpec struct {
 	Draft         bool
 	DryRun        bool
 	Script        []string // the command to run in each repo, e.g. ["sed", "-i", ...]
+
+	// Sign selects how commits are signed: SignLocal (the operator's own GPG key
+	// via the git binary), SignGitHub (GitHub's web-flow key via the API), or
+	// SignNone (unsigned). There is no default — a real run must set it.
+	Sign string
 
 	// BatchSize and BatchPause throttle PR creation to stay under GitHub's
 	// secondary rate limits (80 content-generating requests/min). When BatchSize
