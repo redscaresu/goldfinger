@@ -395,7 +395,9 @@ goldfinger apply  --name payments -- sed -i '…' Dockerfile
 ## Install
 
 goldfinger itself — the one-line installer grabs the right prebuilt binary for
-your OS/arch, verifies its checksum, and drops it on your PATH (no Go needed):
+your OS/arch, verifies its checksum, and installs it to `/usr/local/bin` (or
+`~/.local/bin` if that isn't writable), printing a PATH hint if the target dir
+isn't already on your PATH (no Go needed):
 
 ```sh
 curl -sSfL https://raw.githubusercontent.com/redscaresu/goldfinger/main/install.sh | sh
@@ -413,14 +415,18 @@ brew install redscaresu/tap/goldfinger
 Prefer to fetch the binary yourself? (linux/darwin × amd64/arm64; macOS arm64 shown)
 
 ```sh
-curl -sSfL -o goldfinger \
-  https://github.com/redscaresu/goldfinger/releases/latest/download/goldfinger-darwin-arm64
-chmod +x goldfinger && sudo mv goldfinger /usr/local/bin/
+base=https://github.com/redscaresu/goldfinger/releases/latest/download
+curl -sSfL -O "$base/goldfinger-darwin-arm64"
+curl -sSfL -O "$base/goldfinger-darwin-arm64.sha256"
+shasum -a 256 -c goldfinger-darwin-arm64.sha256   # verify BEFORE trusting the binary
+chmod +x goldfinger-darwin-arm64
+sudo mv goldfinger-darwin-arm64 /usr/local/bin/goldfinger
 ```
 
-Each binary ships a matching `.sha256` sidecar; verify a manual download with
-`shasum -a 256 -c goldfinger-darwin-arm64.sha256` (the one-line installer above
-does this for you). Browse builds at
+Keep the asset's own filename until after the check — the `.sha256` sidecar
+records `<hash>  goldfinger-darwin-arm64`, so `shasum -c` looks for that exact
+name; rename to `goldfinger` only on the final `mv` (the one-line installer above
+does all of this for you). Browse builds at
 [Releases](https://github.com/redscaresu/goldfinger/releases).
 
 Or install from source with Go:
