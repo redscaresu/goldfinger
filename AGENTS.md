@@ -7,7 +7,12 @@ this file, so Claude Code reads exactly the same content — one source of truth
 
 - **Operating goldfinger** (running the CLI, in this repo or elsewhere): run
   `goldfinger guide` for the operator playbook, or read `cmd/guide.md`. Do **not**
-  rely on this file for usage.
+  rely on this file for usage. One convention worth knowing up front: when you're
+  developing a fleet change, `mirror --purpose <name>` (optionally `--branch
+  <b>`) into a fresh, timestamped `~/goldfinger/<purpose>[-<branch>]-<stamp>`
+  snapshot to read and test against — each run gets its own pristine dir,
+  goldfinger never deletes it, so you clean it up when done. Full recipe in
+  `goldfinger guide`.
 - **Changing goldfinger's code** (you are here): read `README.md` first for the
   product design and rationale, then follow the rules below and the build plan in
   `IMPLEMENTATION.md` — start at its "Start here" section; its pinned decisions
