@@ -20,7 +20,10 @@ func newRootCmd() *cobra.Command {
 		// Validation errors are actionable on their own; don't bury them
 		// under a full usage dump.
 		SilenceUsage: true,
+		// main owns error printing and the process exit code, so that `check`
+		// can exit non-zero for drift without Cobra printing an "Error:" line.
+		SilenceErrors: true,
 	}
-	root.AddCommand(newSelectCmd(), newMirrorCmd(), newApplyCmd(), newSelectionsCmd(), newGuideCmd())
+	root.AddCommand(newSelectCmd(), newMirrorCmd(), newApplyCmd(), newCheckCmd(), newSelectionsCmd(), newGuideCmd())
 	return root
 }

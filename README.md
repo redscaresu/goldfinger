@@ -213,6 +213,26 @@ entry plus the script and PR flags.
     are skipped, so a re-run only attempts the remainder — apply is naturally
     resumable, which is how you spread a big fleet across hours.
 
+### `goldfinger check`
+
+A selection is frozen at `select` time, but repos get created, archived, and
+renamed. Before a large mirror or apply, `check` tells you whether the lockfile
+still matches reality:
+
+```sh
+goldfinger check                 # ./goldfinger.selection
+goldfinger check --name platform # a named cohort
+```
+
+It re-runs discovery using the selection's **own recorded filter** and diffs the
+result against the lockfile, reporting repos added (`+`), removed with a reason
+(`-`, e.g. archived / no longer matches / deleted), whose default branch has
+moved (`~`, which changes where an apply PR would land), or whose owner type has
+flipped (`!`). It is read-only — it never rewrites the lockfile (re-run `select`
+to refresh) and never re-runs discovery inside `mirror`/`apply`, so that
+guarantee is preserved. Exit status makes it usable as a CI gate: `0` in sync,
+`1` drift found, `2` error.
+
 ### Named selections
 
 By default a selection lives in `./goldfinger.selection`. To keep several
