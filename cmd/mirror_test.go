@@ -78,20 +78,25 @@ func TestRequireToolMissing(t *testing.T) {
 func TestRunMirror(t *testing.T) {
 	sel := models.Selection{Owner: "redscaresu", OwnerType: models.OwnerUser, Repos: []models.Repo{{Owner: "redscaresu", Name: "a"}}}
 
-	t.Run("success frames and delegates", func(t *testing.T) {
+	t.Run("prints workspace path to stdout, banners to stderr", func(t *testing.T) {
 		var gotArgs []string
 		run := func(_ context.Context, _ string, args, _ []string) error { gotArgs = args; return nil }
-		var errOut bytes.Buffer
-		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, &errOut)
+		var out, errOut bytes.Buffer
+		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, &out, &errOut)
 		require.NoError(t, err)
+		// stdout is exactly the bare absolute path (plus newline) so a script can
+		// capture it — nothing else leaks onto stdout.
+		assert.Equal(t, "/tmp/ws\n", out.String())
+		// Human banners stay on stderr, keeping stdout parseable.
 		assert.Contains(t, errOut.String(), "Mirroring 1 repo(s)")
 		assert.Contains(t, errOut.String(), "mirror complete")
+		assert.NotContains(t, errOut.String(), "\n/tmp/ws\n")
 		assert.Contains(t, gotArgs, "--path=/tmp/ws")
 	})
 
 	t.Run("propagates delegate error", func(t *testing.T) {
 		run := func(_ context.Context, _ string, _, _ []string) error { return errors.New("ghorg blew up") }
-		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, &bytes.Buffer{})
+		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, &bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ghorg blew up")
 	})
@@ -103,4 +108,14 @@ func TestMirrorCmdMissingToken(t *testing.T) {
 	_, err := executeCmd(t, "", "mirror")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GOLD_FINGER_PAT")
+}
+
+func TestMirrorCmdBranchWithShallowRejectedBeforeToken(t *testing.T) {
+	// The --branch/--clone-depth guard is pure local flag logic and runs before
+	// the token check: with no token set, the failure is still the clone-depth
+	// error, not the missing-token one, proving the ordering.
+	_, err := executeCmd(t, "", "mirror", "--branch", "dev", "--clone-depth", "1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--clone-depth")
+	assert.NotContains(t, err.Error(), "GOLD_FINGER_PAT")
 }

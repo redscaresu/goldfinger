@@ -52,7 +52,7 @@ goldfinger mirror [--selection <path>]
                   [--purpose <name>]     # ephemeral ~/goldfinger/<purpose>[-<branch>]-<YYYY-MM-DD-HHMMSS.mmm>; excl. with --workspace
                   [--branch <name>]      # ghorg --branch: checkout this branch in every repo (default: each repo's own)
                   [--concurrency N]      # passthrough to ghorg
-                  [--clone-depth N]      # passthrough to ghorg (shallow)
+                  [--clone-depth N]      # passthrough to ghorg (shallow); incompatible with --branch
                   [--no-clean]           # preserve local edits in existing clones
                   [--dry-run]            # show what ghorg would clone
 
@@ -73,6 +73,12 @@ Flag rules (enforced in `cmd/` before any external call):
 - `select`: `--org` required; exactly one of `--all-repos` / `--topic`.
 - `mirror` / `apply`: the selection file must exist and parse (tell the user to
   run `select` first if not).
+- `mirror`: `--branch` and `--clone-depth > 0` are mutually exclusive. A ghorg
+  shallow clone fetches only each repo's default branch, so `--branch` would
+  silently fall back to the default; refuse the combo (don't quietly promote to
+  full depth). `mirror` also prints the resolved workspace path as a bare
+  absolute line on stdout (banners + ghorg output stay on stderr) so scripts can
+  capture it without globbing the stamped dir.
 - `apply`: `--branch`, `--commit-message`, `--pr-title`, a script after `--`, and
   `--sign` set to one of `local` / `github` / `none` (required, no default — a
   real run must declare its signing intent).

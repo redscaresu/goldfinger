@@ -22,6 +22,24 @@ func validateTargeting(t targeting) error {
 	return nil
 }
 
+// mirrorValidation is the subset of `mirror` flags whose combination needs
+// checking before any token/tool/selection work.
+type mirrorValidation struct {
+	branch     string
+	cloneDepth int
+}
+
+// validateMirror rejects flag combinations that ghorg cannot honour. A shallow
+// clone (--clone-depth > 0) only fetches each repo's default branch, so a
+// --branch request would silently fall back to the default rather than checking
+// out the asked-for branch — refuse it instead of quietly changing the depth.
+func validateMirror(mv mirrorValidation) error {
+	if mv.branch != "" && mv.cloneDepth > 0 {
+		return errors.New("--branch cannot be combined with --clone-depth > 0: ghorg shallow clones only fetch the default branch; omit --clone-depth or use --clone-depth 0")
+	}
+	return nil
+}
+
 // applyValidation is the subset of `apply` flags whose presence is mandatory.
 type applyValidation struct {
 	branch        string

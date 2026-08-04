@@ -32,6 +32,11 @@ func newMirrorCmd() *cobra.Command {
 		Use:   "mirror",
 		Short: "Clone the selection into a local workspace via ghorg",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Pure local flag check first, before any token/tool/selection work,
+			// so an impossible flag combo fails fast without needing a token.
+			if err := validateMirror(mirrorValidation{branch: branch, cloneDepth: cloneDepth}); err != nil {
+				return err
+			}
 			token, source, err := resolveToken(cmd.Context())
 			if err != nil {
 				return err
@@ -58,7 +63,7 @@ func newMirrorCmd() *cobra.Command {
 				CloneDepth:  cloneDepth,
 				NoClean:     noClean,
 				DryRun:      dryRun,
-			}, cmd.ErrOrStderr())
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	addSelectionFlags(cmd, &name, &selectionPath)
@@ -67,7 +72,7 @@ func newMirrorCmd() *cobra.Command {
 	f.StringVar(&purpose, "purpose", "", "ephemeral, timestamped workspace ~/goldfinger/<purpose>-<YYYY-MM-DD-HHMMSS.mmm> (goldfinger stamps the time to the millisecond; you clean the dir up when done); mutually exclusive with --workspace")
 	f.StringVar(&branch, "branch", "", "checkout this branch in every cloned repo (one name for all repos; ghorg leaves a repo on its default branch where the branch is absent). With --purpose it is also folded into the dir name: <purpose>-<branch>-<stamp>. Default: each repo's own default branch")
 	f.IntVar(&concurrency, "concurrency", 0, "concurrent clones (0 = ghorg default)")
-	f.IntVar(&cloneDepth, "clone-depth", 0, "shallow clone depth (0 = full history)")
+	f.IntVar(&cloneDepth, "clone-depth", 0, "shallow clone depth (0 = full history). Incompatible with --branch: a shallow clone only fetches each repo's default branch, so --branch would silently fall back to the default")
 	f.BoolVar(&noClean, "no-clean", false, "preserve local changes in existing clones (skip ghorg's git clean on re-sync)")
 	f.BoolVar(&dryRun, "dry-run", false, "show what ghorg would clone without cloning")
 	return cmd
@@ -76,8 +81,16 @@ func newMirrorCmd() *cobra.Command {
 // runMirror frames the mirror phase and delegates to the mirror package. It is
 // the testable core of the mirror command (the Runner seam lets tests exercise
 // it without ghorg installed).
-func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws, token string, opts mirror.Options, errOut io.Writer) error {
+//
+// The resolved workspace path is the one machine-readable line goldfinger emits:
+// it goes to out (stdout) as a bare absolute path so a script can capture it
+// (ws=$(goldfinger mirror ... 2>log)), while every human banner and the ghorg
+// child's own output stay on errOut (stderr) to keep stdout parseable. The path
+// prints before delegating: if ghorg later fails, stdout still holds the
+// intended path, so callers must check the exit code, not stdout, for success.
+func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws, token string, opts mirror.Options, out, errOut io.Writer) error {
 	opts.Workspace = ws
+	fmt.Fprintln(out, ws)
 	banner(errOut, fmt.Sprintf("Mirroring %d repo(s) into %s", len(sel.Repos), ws))
 	if err := mirror.Mirror(ctx, run, sel, token, opts); err != nil {
 		return err

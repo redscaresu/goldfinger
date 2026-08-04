@@ -14,4 +14,9 @@ func TestGuideRenders(t *testing.T) {
 	for _, want := range []string{"select", "mirror", "apply", "dry-run", "GOLD_FINGER_PAT"} {
 		assert.Contains(t, out, want)
 	}
+	// The shallow-clone-vs---branch gotcha must be documented in the embedded
+	// guide so operators hit it before the CLI has to refuse the combo.
+	for _, want := range []string{"--clone-depth", "--branch", "default branch"} {
+		assert.Contains(t, out, want)
+	}
 }

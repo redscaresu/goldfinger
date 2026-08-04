@@ -11,7 +11,13 @@ this file, so Claude Code reads exactly the same content — one source of truth
   developing a fleet change, `mirror --purpose <name>` (optionally `--branch
   <b>`) into a fresh, timestamped `~/goldfinger/<purpose>[-<branch>]-<stamp>`
   snapshot to read and test against — each run gets its own pristine dir,
-  goldfinger never deletes it, so you clean it up when done. Full recipe in
+  goldfinger never deletes it, so you clean it up when done. `mirror` prints that
+  resolved workspace path as a bare line on stdout (banners/ghorg output go to
+  stderr), so capture it rather than globbing for the stamped dir. One gotcha:
+  `--branch` and `--clone-depth` are incompatible (a shallow clone only fetches
+  each repo's default branch, so `--branch dev --clone-depth 1` would silently
+  skip `dev` wherever it isn't the default) — goldfinger refuses the combo; omit
+  `--clone-depth` when mirroring a non-default branch. Full recipe in
   `goldfinger guide`.
 - **Changing goldfinger's code** (you are here): read `README.md` first for the
   product design and rationale, then follow the rules below and the build plan in
