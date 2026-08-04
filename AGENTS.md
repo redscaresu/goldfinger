@@ -1,15 +1,17 @@
 # AGENTS.md
 
-Guidance for AI agents working in this repository. (Claude Code also reads
-`CLAUDE.md`, which carries the same rules.)
+Guidance for AI agents working in this repository. (`CLAUDE.md` is a symlink to
+this file, so Claude Code reads exactly the same content — one source of truth.)
 
 ## Two audiences — don't confuse them
 
 - **Operating goldfinger** (running the CLI, in this repo or elsewhere): run
   `goldfinger guide` for the operator playbook, or read `cmd/guide.md`. Do **not**
   rely on this file for usage.
-- **Changing goldfinger's code** (you are here): follow the rules below and the
-  build plan in `IMPLEMENTATION.md`.
+- **Changing goldfinger's code** (you are here): read `README.md` first for the
+  product design and rationale, then follow the rules below and the build plan in
+  `IMPLEMENTATION.md` — start at its "Start here" section; its pinned decisions
+  and scope fences are binding.
 
 ## What goldfinger is
 
@@ -31,7 +33,8 @@ it does not reimplement mirroring or PR-fanout.
   change** — and then must dry-run first, present the diff, and prefer `--draft`.
   Absent explicit authorization, the real run is the human's to execute.
 - The selection lockfile is authoritative: `mirror` and `apply` read it and must
-  never re-run discovery.
+  never re-run discovery — so "the repos I mirror" and "the repos I change" are
+  provably the same set, which is the whole product.
 - Tokens go to child tools via their env vars (`GHORG_GITHUB_TOKEN`,
   `GITHUB_TOKEN`), never argv. Tests assert no token appears in argv.
 - Flat packages (`cmd/`, `models/`, `client/`, `discovery/`, `selection/`,

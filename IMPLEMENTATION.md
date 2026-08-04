@@ -48,9 +48,13 @@ goldfinger select --org <owner> (--all-repos | --topic <t> [--topic <t>...])
                   [--selection <path>]   # default ./goldfinger.selection
 
 goldfinger mirror [--selection <path>]
-                  [--workspace <dir>]    # default ~/goldfinger/<owner>
+                  [--workspace <dir>]    # default ~/goldfinger; repos land in <workspace>/<owner>
+                  [--purpose <name>]     # ephemeral ~/goldfinger/<purpose>[-<branch>]-<YYYY-MM-DD-HHMMSS.mmm>; excl. with --workspace
+                  [--branch <name>]      # ghorg --branch: checkout this branch in every repo (default: each repo's own)
                   [--concurrency N]      # passthrough to ghorg
                   [--clone-depth N]      # passthrough to ghorg (shallow)
+                  [--no-clean]           # preserve local edits in existing clones
+                  [--dry-run]            # show what ghorg would clone
 
 goldfinger apply  [--selection <path>]
                   --branch <name>

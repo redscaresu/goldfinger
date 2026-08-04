@@ -28,10 +28,36 @@ WORKFLOW
      Writes ./goldfinger.selection (JSON: owner/name list + provenance) and
      prints the set. --org accepts a GitHub org OR user.
 
-  2. Mirror — clone the selection locally (optional; for grep/inspection):
+  2. Mirror — clone the selection locally (OPTIONAL — for reading/scanning the
+     fleet; NOT needed to open PRs. apply clones on its own, see step 3):
        goldfinger mirror
      Repos land in <workspace>/<owner> (default workspace ~/goldfinger).
      Re-run any time to refresh (ghorg pulls existing clones).
+
+     Pass --branch <name> to check out a specific branch in every clone instead
+     of each repo's default. It is ONE name applied to all repos: ghorg leaves a
+     repo on its default branch where that branch is absent (best-effort "prefer
+     dev where it exists", not a per-repo guarantee).
+
+     For a one-off mass-PR campaign, use --purpose for an ephemeral, timestamped
+     workspace: you supply the purpose, goldfinger stamps the time to the
+     millisecond so each run gets its own pristine dir —
+       goldfinger mirror --purpose keyv-cve --clone-depth 1
+       # clones into ~/goldfinger/keyv-cve-2026-08-04-132045.123/<owner>/
+       # ...scan / develop the change script against that snapshot...
+     With --branch the branch is folded into the name too, <purpose>-<branch>-<stamp>
+     (a branch's slashes become dashes) —
+       goldfinger mirror --purpose keyv-cve --branch dev
+       # clones into ~/goldfinger/keyv-cve-dev-2026-08-04-132045.123/<owner>/
+     goldfinger NEVER deletes the directory — it persists so you can review it;
+     clean it up yourself when done
+     (e.g. rm -rf ~/goldfinger/keyv-cve-2026-08-04-132045.123).
+     A fresh per-campaign clone is pristine by construction, so it never hits the
+     divergence trap a long-lived clone can: if upstream rebases/squashes its
+     default branch, a stale persistent clone can no longer git pull (exit 128) —
+     git clean removes files, not commits, so it cannot recover a diverged clone.
+     Keep the durable artifact (the lockfile), not the clones.
+
      The lockfile is authoritative: goldfinger strips set-narrowing/pruning
      GHORG_* env vars and forces an empty ghorgignore, and invokes multi-gitter
      with an empty --config, so ambient host config can't change the set.
@@ -42,7 +68,12 @@ WORKFLOW
      The command after -- runs in each repo's checkout (via multi-gitter), on
      your machine — keep it portable (`sed -i` differs on macOS/BSD). For
      non-trivial or per-file edits, pass a script: `-- python3 /abs/migrate.py`.
-     If it changes files and exits 0, a PR is prepared.
+     If it changes files and exits 0, a PR is prepared. multi-gitter makes its
+     own temporary checkout per repo (NOT the mirror workspace), so apply is
+     independent of step 2 — you can apply without ever running mirror. It
+     branches from the base branch's LIVE HEAD at apply time, not the SHA you
+     mirrored in step 2 — so always --dry-run first (it clones fresh too) to see
+     the real diff rather than trusting the snapshot you inspected.
      With --base-branch omitted, each PR targets that repo's own default branch,
      so a mixed dev/main selection routes correctly per repo.
 
@@ -76,6 +107,12 @@ SAFETY — READ THIS
 
 NOTES FOR AI AGENTS
   - The selection lockfile is JSON — read it directly for structured state.
+  - Before authoring an apply, MIRROR first and READ the real code (Dockerfiles,
+    imports, CI configs, etc.). A fleet change script written blind will be wrong
+    on the edge cases — the variety across repos is exactly why you inspect a
+    local snapshot before fanning out. Mirror with --purpose <name> for an
+    ephemeral, timestamped snapshot, read + develop+test the script there, then
+    apply (which clones its own copy).
   - Every error names the next action (e.g. "run goldfinger select first",
     or an install hint for a missing tool). Follow it.
   - "the repos I mirror" and "the repos I apply to" are the same frozen set,
