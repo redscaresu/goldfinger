@@ -108,8 +108,12 @@ type Repo struct {
     Owner, Name, CloneURL, DefaultBranch string
     Topics   []string
     Archived bool
+    BranchPresence map[string]bool // v2: per-branch presence recorded at select time
 }
 func (r Repo) FullName() string // "owner/name"
+// RecordedBranch(branch) (has, known bool): known is false for a branch never
+// checked at select time (old v1 lockfile, or no --branch-presence) — never guess.
+func (r Repo) RecordedBranch(branch string) (has, known bool)
 
 type SelectionFilter struct {
     AllRepos bool
@@ -117,13 +121,14 @@ type SelectionFilter struct {
 }
 
 type Selection struct {
-    Version    int             // schema version, start at 1
+    Version    int             // schema version; 2 (v1 still readable)
     Owner      string          // org or user login
     OwnerType  string          // "User" | "Organization"
     Filter     SelectionFilter
     ResolvedAt time.Time
     Tool       string          // e.g. "goldfinger dev"
     Repos      []Repo
+    BranchesChecked []string   // v2: branch names probed via `select --branch-presence`
 }
 
 type ApplySpec struct {
@@ -143,6 +148,9 @@ which dispatches on owner type: authenticated user → `/user/repos`
 (`affiliation=owner`, includes private); other user → `/users/{u}/repos`; org →
 `/orgs/{o}/repos`. Paginates via `Response.NextPage`. Topics come back in the
 listing (preview header is set by go-github). Returns `[]models.Repo`.
+`BranchExists(ctx, owner, repo, branch) (bool, error)` is a read-only
+`Repositories.GetBranch` — 404 → `(false, nil)`, other errors propagate — used
+by `select --branch-presence` to freeze branch facts into the v2 lockfile.
 
 ### discovery  [BUILT]
 
@@ -158,7 +166,16 @@ func Read(path string) (models.Selection, error)     // parse + validate Version
 
 The lockfile is the shared artifact. JSON so it's reviewable and round-trips in a
 test. `Read` errors clearly if the file is missing ("run `goldfinger select`
-first") or the schema version is unknown.
+first") or the schema version is unknown. It accepts **v1 and v2**: a v1 lockfile
+(no branch metadata) migrates in memory to empty branch facts, which read back as
+"unknown" (never guessed).
+
+Mirror report flow: `mirror --report-json` / `--write-report` emit a
+machine-readable report built by the pure `cmd/buildMirrorReport(sel, ws, opts)`
+(stdlib `encoding/json`), rendered only after a successful mirror. It reports
+only lockfile-knowable facts — workspace, owner, repo count, requested branch,
+and each repo's `branchStatus` (has-branch / falls-back-to-default / unknown /
+default-branch) derived from `Repo.RecordedBranch`. No git, no re-discovery.
 
 ### mirror
 

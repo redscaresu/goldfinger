@@ -119,22 +119,35 @@ goldfinger select --org mycompany --all-repos
 - `--all-repos` or `--topic <t>` (repeatable, any-match) — exactly one is
   required. Topic filtering is goldfinger's, applied here and frozen into the
   lockfile; ghorg's and multi-gitter's own topic flags are bypassed.
+- `--branch-presence <name>` (repeatable) — for each named branch, record
+  (read-only) whether it exists on every selected repo, and freeze that into the
+  lockfile so a later `mirror` can report which repos actually have it. Run it
+  for the branch you intend to `mirror --branch`, e.g. `select … --branch-presence
+  dev`. A name equal to a repo's own default branch is present by definition
+  (no API call); duplicates are deduped. These facts are **recorded at selection
+  time and can drift** — re-`select` to refresh them.
 - Writes `goldfinger.selection` and prints the set for review. The lockfile is
   plain JSON — inspect or diff it before mirroring/applying:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "owner": "mycompany",
   "ownerType": "Organization",
   "filter": { "topics": ["platform"] },
   "resolvedAt": "2026-08-01T15:17:53Z",
   "tool": "goldfinger v0.2.0",
+  "branchesChecked": ["dev"],
   "repos": [
-    { "owner": "mycompany", "name": "billing", "cloneURL": "https://github.com/mycompany/billing.git", "defaultBranch": "main", "topics": ["platform"] }
+    { "owner": "mycompany", "name": "billing", "cloneURL": "https://github.com/mycompany/billing.git", "defaultBranch": "main", "topics": ["platform"], "branchPresence": { "dev": true } }
   ]
 }
 ```
+
+`version` is `2`; a `version: 1` lockfile (no `branchesChecked` /
+`branchPresence`) still reads, with every branch treated as **unknown** rather
+than guessed. `branchesChecked` and each repo's `branchPresence` appear only
+when you passed `--branch-presence`.
 
 ### `goldfinger mirror`
 
@@ -177,6 +190,43 @@ The resolved workspace path is printed as a bare absolute path to **stdout**
 `ws=$(goldfinger mirror --purpose keyv-cve 2>mirror.log)` — instead of globbing
 for the millisecond-stamped dir. Because the path prints before ghorg runs, check
 the exit code (not stdout) to confirm the clone succeeded.
+
+To know *which* repos actually had the branch (rather than silently falling
+back), record it at `select` time with `--branch-presence <name>` and ask
+`mirror` for a report:
+
+- `--report-json` prints a machine-readable JSON report to **stdout** after a
+  successful mirror. It *replaces* the bare workspace-path line above — stdout
+  carries one or the other, so the JSON stays parseable (the path is a field in
+  the report).
+- `--write-report` writes the same JSON to `<workspace>/goldfinger-mirror.json`
+  (only on success — a failed clone leaves no report).
+
+The report is built **purely from the lockfile** — goldfinger runs no `git` and
+re-runs no discovery — so every fact in it (`workspace`, `owner`, `repoCount`,
+the requested `branch`, and each repo's `branchStatus`) is knowable without
+touching a clone:
+
+```json
+{
+  "workspace": "/Users/me/goldfinger",
+  "owner": "mycompany",
+  "repoCount": 2,
+  "branch": "dev",
+  "branchFactsNote": "branchStatus values come from branch presence recorded at selection time (via `select --branch-presence`) and can drift; \"unknown\" means the branch was not checked then — goldfinger does not guess it here.",
+  "repos": [
+    { "repo": "mycompany/billing", "defaultBranch": "main", "branchStatus": "has-branch" },
+    { "repo": "mycompany/web", "defaultBranch": "main", "branchStatus": "falls-back-to-default" }
+  ]
+}
+```
+
+`branchStatus` is `has-branch` (the branch was present at select time, or is the
+repo's own default), `falls-back-to-default` (absent at select time, so ghorg
+stays on the default), or `unknown` (the branch was never checked at select time
+— an old lockfile, or no `--branch-presence` for it; goldfinger does **not**
+guess). With no `--branch`, every repo reports `default-branch`. Because the
+facts are recorded at selection time, they can drift; re-`select` to refresh.
 
 **For a one-off mass-PR campaign, use `--purpose` for an ephemeral, timestamped
 workspace** — you supply the purpose, goldfinger stamps the time to the

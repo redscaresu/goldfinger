@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,7 +84,7 @@ func TestRunMirror(t *testing.T) {
 		var gotArgs []string
 		run := func(_ context.Context, _ string, args, _ []string) error { gotArgs = args; return nil }
 		var out, errOut bytes.Buffer
-		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, &out, &errOut)
+		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, reportOptions{}, &out, &errOut)
 		require.NoError(t, err)
 		// stdout is exactly the bare absolute path (plus newline) so a script can
 		// capture it — nothing else leaks onto stdout.
@@ -96,9 +98,118 @@ func TestRunMirror(t *testing.T) {
 
 	t.Run("propagates delegate error", func(t *testing.T) {
 		run := func(_ context.Context, _ string, _, _ []string) error { return errors.New("ghorg blew up") }
-		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, &bytes.Buffer{}, &bytes.Buffer{})
+		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, reportOptions{}, &bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ghorg blew up")
+	})
+}
+
+func TestBuildMirrorReportCategorises(t *testing.T) {
+	sel := models.Selection{
+		Owner:           "acme",
+		OwnerType:       models.OwnerUser,
+		BranchesChecked: []string{"dev"},
+		Repos: []models.Repo{
+			{Owner: "acme", Name: "has-it", DefaultBranch: "main", BranchPresence: map[string]bool{"dev": true}},
+			{Owner: "acme", Name: "lacks-it", DefaultBranch: "main", BranchPresence: map[string]bool{"dev": false}},
+			{Owner: "acme", Name: "default-is-dev", DefaultBranch: "dev"},
+			{Owner: "acme", Name: "never-checked", DefaultBranch: "main"}, // no BranchPresence -> unknown
+		},
+	}
+	rep := buildMirrorReport(sel, "/tmp/ws", mirror.Options{Branch: "dev"})
+
+	assert.Equal(t, "/tmp/ws", rep.Workspace)
+	assert.Equal(t, "acme", rep.Owner)
+	assert.Equal(t, 4, rep.RepoCount)
+	assert.Equal(t, "dev", rep.Branch)
+	assert.NotEmpty(t, rep.BranchFactsNote, "a requested branch carries the drift caveat")
+
+	status := map[string]string{}
+	for _, r := range rep.Repos {
+		status[r.Repo] = r.BranchStatus
+	}
+	assert.Equal(t, branchStatusHas, status["acme/has-it"])
+	assert.Equal(t, branchStatusFallback, status["acme/lacks-it"])
+	assert.Equal(t, branchStatusHas, status["acme/default-is-dev"], "default branch is present by definition")
+	assert.Equal(t, branchStatusUnknown, status["acme/never-checked"], "unchecked branch is unknown, not guessed")
+}
+
+func TestBuildMirrorReportNoBranch(t *testing.T) {
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a", DefaultBranch: "main"}}}
+	rep := buildMirrorReport(sel, "/tmp/ws", mirror.Options{})
+
+	assert.Empty(t, rep.Branch)
+	assert.Empty(t, rep.BranchFactsNote, "no requested branch, no branch caveat")
+	require.Len(t, rep.Repos, 1)
+	assert.Equal(t, branchStatusDefault, rep.Repos[0].BranchStatus)
+}
+
+func TestRunMirrorReport(t *testing.T) {
+	sel := models.Selection{
+		Owner: "acme", OwnerType: models.OwnerUser,
+		BranchesChecked: []string{"dev"},
+		Repos:           []models.Repo{{Owner: "acme", Name: "svc", DefaultBranch: "main", BranchPresence: map[string]bool{"dev": true}}},
+	}
+
+	t.Run("writes report to stdout and file on success", func(t *testing.T) {
+		ws := t.TempDir()
+		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+		var out bytes.Buffer
+		err := runMirror(context.Background(), run, sel, ws, "tok", mirror.Options{Branch: "dev"},
+			reportOptions{toStdout: true, toFile: true}, &out, &bytes.Buffer{})
+		require.NoError(t, err)
+
+		var fromStdout mirrorReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &fromStdout))
+		assert.Equal(t, ws, fromStdout.Workspace)
+
+		data, err := os.ReadFile(filepath.Join(ws, mirrorReportName))
+		require.NoError(t, err)
+		var fromFile mirrorReport
+		require.NoError(t, json.Unmarshal(data, &fromFile))
+		require.Len(t, fromFile.Repos, 1)
+		assert.Equal(t, branchStatusHas, fromFile.Repos[0].BranchStatus)
+	})
+
+	// Regression: --report-json and the bare workspace-path line both target
+	// stdout, so integrating #15-D (path line) with #15-C (JSON report) risked
+	// emitting BOTH — a "/tmp/ws\n{...}" stream that no JSON reader can parse.
+	// stdout must carry the JSON alone in report mode.
+	t.Run("report mode suppresses the bare workspace-path line on stdout", func(t *testing.T) {
+		ws := t.TempDir()
+		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+		var out bytes.Buffer
+		err := runMirror(context.Background(), run, sel, ws, "tok", mirror.Options{Branch: "dev"},
+			reportOptions{toStdout: true}, &out, &bytes.Buffer{})
+		require.NoError(t, err)
+		assert.False(t, strings.HasPrefix(out.String(), ws+"\n"),
+			"report mode must not prepend the bare path line before the JSON")
+		// The whole of stdout is one JSON document — nothing else leaked onto it.
+		var rep mirrorReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+		assert.Equal(t, ws, rep.Workspace)
+	})
+
+	t.Run("no report file when the mirror fails", func(t *testing.T) {
+		ws := t.TempDir()
+		run := func(_ context.Context, _ string, _, _ []string) error { return errors.New("boom") }
+		err := runMirror(context.Background(), run, sel, ws, "tok", mirror.Options{Branch: "dev"},
+			reportOptions{toFile: true}, &bytes.Buffer{}, &bytes.Buffer{})
+		require.Error(t, err)
+		_, statErr := os.Stat(filepath.Join(ws, mirrorReportName))
+		assert.True(t, os.IsNotExist(statErr), "a failed mirror must not leave a report claiming success")
+	})
+
+	t.Run("no report on a dry-run", func(t *testing.T) {
+		ws := t.TempDir()
+		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+		var out bytes.Buffer
+		err := runMirror(context.Background(), run, sel, ws, "tok", mirror.Options{Branch: "dev", DryRun: true},
+			reportOptions{toStdout: true, toFile: true}, &out, &bytes.Buffer{})
+		require.NoError(t, err)
+		assert.Empty(t, out.String(), "a dry-run clones nothing, so it emits no stdout report")
+		_, statErr := os.Stat(filepath.Join(ws, mirrorReportName))
+		assert.True(t, os.IsNotExist(statErr), "a dry-run must not write a report file")
 	})
 }
 
