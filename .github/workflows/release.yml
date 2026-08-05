@@ -78,3 +78,42 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/SHA256SUMS
+
+  # Bump the Homebrew tap so `brew install redscaresu/tap/goldfinger` tracks this
+  # release. Self-gating: with no HOMEBREW_TAP_TOKEN secret set the step logs a
+  # notice and exits 0, so the release never fails on a missing tap. To enable,
+  # create the redscaresu/homebrew-tap repo and add a HOMEBREW_TAP_TOKEN secret
+  # (a token with contents:write on that repo).
+  homebrew:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish Homebrew formula
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN not set — skipping Homebrew formula bump."
+            exit 0
+          fi
+          mkdir -p dist
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" --pattern '*.sha256' --dir dist
+          sh packaging/homebrew/bump.sh "${GITHUB_REF_NAME}" dist > goldfinger.rb
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/redscaresu/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp goldfinger.rb tap/Formula/goldfinger.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/goldfinger.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date."
+            exit 0
+          fi
+          git commit -m "goldfinger ${GITHUB_REF_NAME}"
+          git push

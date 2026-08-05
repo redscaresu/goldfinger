@@ -16,6 +16,12 @@ The value goldfinger adds is not mirroring or PR-fanout — those tools already 
 each well. It's that **"the repos I mirror" and "the repos I change" are provably
 the same set**, captured in one artifact you can inspect before anything runs.
 
+goldfinger is **built to be driven by AI agents as much as by people**: every
+`apply` is a dry-run until you add `--confirm`, the selection is a JSON lockfile,
+errors name the next action, and `goldfinger guide` ships the whole playbook
+inside the binary — so an agent can self-orient, act safely, and recover without
+a human narrating each step. See [For AI agents](#for-ai-agents).
+
 ## It's a wrapper over ghorg and multi-gitter
 
 goldfinger does **not** clone repos or open PRs itself. It is a thin wrapper that
@@ -388,18 +394,41 @@ goldfinger apply  --name payments -- sed -i '…' Dockerfile
 
 ## Install
 
-goldfinger itself — a prebuilt binary is the quickest path (no Go needed):
+goldfinger itself — the one-line installer grabs the right prebuilt binary for
+your OS/arch, verifies its checksum, and installs it to `/usr/local/bin` (or
+`~/.local/bin` if that isn't writable), printing a PATH hint if the target dir
+isn't already on your PATH (no Go needed):
 
 ```sh
-# linux/darwin × amd64/arm64 are attached to every release; macOS arm64 shown:
-curl -sSfL -o goldfinger \
-  https://github.com/redscaresu/goldfinger/releases/latest/download/goldfinger-darwin-arm64
-chmod +x goldfinger && sudo mv goldfinger /usr/local/bin/
+curl -sSfL https://raw.githubusercontent.com/redscaresu/goldfinger/main/install.sh | sh
+# pin a version / install dir (env vars go before `sh`, so they reach the script):
+#   curl -sSfL …/install.sh | GOLDFINGER_VERSION=v0.2.0 GOLDFINGER_BIN="$HOME/.local/bin" sh
 goldfinger --version   # -> goldfinger version v0.2.0
 ```
 
-Each release also ships a `SHA256SUMS`; verify a download with
-`shasum -a 256 -c SHA256SUMS`. Browse builds at
+Or, with Homebrew on macOS/Linux — this also pulls in `ghorg` and `multi-gitter`
+automatically (they're `depends_on` in the formula), so there's nothing else to
+install:
+
+```sh
+brew install redscaresu/tap/goldfinger
+```
+
+Prefer to fetch the binary yourself? (linux/darwin × amd64/arm64; macOS arm64 shown)
+
+```sh
+base=https://github.com/redscaresu/goldfinger/releases/latest/download
+curl -sSfL -O "$base/goldfinger-darwin-arm64"
+curl -sSfL -O "$base/goldfinger-darwin-arm64.sha256"
+shasum -a 256 -c goldfinger-darwin-arm64.sha256   # verify BEFORE trusting the binary
+chmod +x goldfinger-darwin-arm64
+sudo mv goldfinger-darwin-arm64 /usr/local/bin/goldfinger
+```
+
+Keep the asset's own filename until after the check — the `.sha256` sidecar
+records `<hash>  goldfinger-darwin-arm64`, so `shasum -c` looks for that exact
+name; rename to `goldfinger` only on the final `mv` (the one-line installer above
+does all of this for you). Browse builds at
 [Releases](https://github.com/redscaresu/goldfinger/releases).
 
 Or install from source with Go:
@@ -410,7 +439,9 @@ go install github.com/redscaresu/goldfinger/cmd@v0.2.0   # or @latest
 git clone https://github.com/redscaresu/goldfinger && cd goldfinger && make build  # -> bin/goldfinger
 ```
 
-The two tools goldfinger drives (both Go, install with `go install`):
+The two tools goldfinger drives (the Homebrew install above already pulls these
+in; only needed with the non-brew install methods — both Go, install with
+`go install`):
 
 ```sh
 go install github.com/gabrie30/ghorg@latest
@@ -460,6 +491,24 @@ operator playbook (the workflow, the dry-run-by-default safety rule, examples)
 that travels with the binary. The selection lockfile is JSON, and every error
 names the next action — so an agent can self-orient and recover without this
 README. Contributor-agent rules live in `AGENTS.md` and `CLAUDE.md`.
+
+**Tell your own agents about it.** The way a tool becomes reachable to the agents
+working in *your* repos is a line in their instructions file. Drop this into your
+repo's `AGENTS.md` (read by Claude Code, Cursor, Codex, and others — or its
+tool-specific equivalent like `CLAUDE.md`) so an agent reaches for goldfinger on
+a fleet change instead of hand-rolling clone/PR loops:
+
+```md
+## Fleet-wide GitHub changes
+
+For any change spanning many repos (bump a dependency, patch a CI config, rotate
+a setting), use the `goldfinger` CLI rather than hand-rolling clone/PR loops — it
+freezes the repo selection once and drives ghorg + multi-gitter against that exact
+set. Run `goldfinger guide` for the playbook. Opening real PRs (`goldfinger apply
+--dry-run=false --confirm`) needs explicit human authorization — always dry-run
+first and show the diff. Install: `brew install redscaresu/tap/goldfinger` or
+`curl -sSfL https://raw.githubusercontent.com/redscaresu/goldfinger/main/install.sh | sh`.
+```
 
 ## Development
 
