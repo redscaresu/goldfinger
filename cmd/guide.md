@@ -226,6 +226,12 @@ MACHINE-READABLE OUTPUT
        goldfinger selections --json   -> {version, selections:[{name, owner, …}]}
        goldfinger mirror --report-json -> {version, workspace, owner, repos, …}
        goldfinger apply --plan-json ... -> {version, dry_run, sign_mode, repos, …}
+       goldfinger guide --json        -> {version, commands:[{name, flags, …}]}
+  guide --json is the self-describing CLI catalogue: every command, its flags,
+  which flags are required, a flag's enum values (e.g. --sign), and a canonical
+  example per command — discover what goldfinger can do by parsing structure
+  instead of this prose. Names/usage come from the live command tree; requiredness
+  and enums are kept in sync with the validators by tests.
   apply --plan-json emits the INVOCATION plan (not the diff; command redacted to
   argv[0], body as a presence bool) on stdout and STILL runs multi-gitter's
   dry-run — you get both the plan and the real diff (on stderr).
