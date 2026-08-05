@@ -148,11 +148,17 @@ jobs:
         # made `go install ghorg` fail when ghorg needed a newer Go than go.mod
         # (the reason go.mod was bumped to 1.26.5). Uses current core versions
         # rather than a pin, so e2e also catches breakage from new tool releases.
+        # Homebrew is preinstalled on ubuntu runners but off PATH; load its
+        # shellenv, then persist its bin dir so the later "Run e2e" step sees
+        # both tools on PATH.
         if: steps.guard.outputs.run == 'true'
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        run: brew install ghorg multi-gitter
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew install ghorg multi-gitter
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Configure git identity
         # multi-gitter authors the commit from git config; CI has none by default.
         if: steps.guard.outputs.run == 'true'
