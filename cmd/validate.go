@@ -69,15 +69,22 @@ func validateApply(av applyValidation) error {
 	return nil
 }
 
+// validSignModes is the single source of truth for --sign's accepted values. Both
+// the validator (validateSign) and the guide --json catalogue (curatedCapabilities)
+// read it, so the advertised enum can never drift from what the code accepts: add
+// a mode here and both the validator and the catalogue gain it together.
+var validSignModes = []string{models.SignLocal, models.SignGitHub, models.SignNone}
+
 // validateSign enforces that --sign is set to a known mode. There is no default:
 // a real run must declare its signing intent explicitly.
 func validateSign(mode string) error {
-	switch mode {
-	case models.SignLocal, models.SignGitHub, models.SignNone:
-		return nil
-	case "":
-		return fmt.Errorf("--sign is required: one of %s (your GPG key), %s (GitHub-verified), or %s (unsigned)", models.SignLocal, models.SignGitHub, models.SignNone)
-	default:
-		return fmt.Errorf("--sign %q is invalid: must be one of %s, %s, or %s", mode, models.SignLocal, models.SignGitHub, models.SignNone)
+	for _, m := range validSignModes {
+		if mode == m {
+			return nil
+		}
 	}
+	if mode == "" {
+		return fmt.Errorf("--sign is required: one of %s (your GPG key), %s (GitHub-verified), or %s (unsigned)", models.SignLocal, models.SignGitHub, models.SignNone)
+	}
+	return fmt.Errorf("--sign %q is invalid: must be one of %s, %s, or %s", mode, models.SignLocal, models.SignGitHub, models.SignNone)
 }
