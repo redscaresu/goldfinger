@@ -52,3 +52,29 @@ jobs:
           files: |
             dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }}
             dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+
+  # Combine the per-binary checksums into one SHA256SUMS manifest. Each matrix
+  # leg builds in isolation, so it can only see its own binary — this job waits
+  # for all four, pulls their .sha256 assets back off the release, concatenates
+  # them, and attaches the manifest README's `shasum -a 256 -c SHA256SUMS`
+  # verify step expects.
+  checksums:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build SHA256SUMS from the per-binary checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern '*.sha256' --dir dist
+          # Each .sha256 already holds "<hash>  <binary>"; concatenating them (sorted
+          # by filename for a stable manifest) yields a standard SHA256SUMS file.
+          (cd dist && cat *.sha256 | sort -k2 > SHA256SUMS)
+
+      - name: Upload SHA256SUMS to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/SHA256SUMS

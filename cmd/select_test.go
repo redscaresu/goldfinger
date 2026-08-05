@@ -19,6 +19,11 @@ type fakeResolver struct {
 	ownerType string
 	verifyErr error
 	listErr   error
+
+	// Branch-presence support for `select --branch-presence`.
+	presentBranches map[string]bool // "owner/name@branch" -> exists
+	branchErr       error
+	branchCalls     *[]string // records each "owner/name@branch" probed
 }
 
 func (f fakeResolver) Verify(context.Context) (string, error) {
@@ -27,6 +32,17 @@ func (f fakeResolver) Verify(context.Context) (string, error) {
 
 func (f fakeResolver) ListRepos(context.Context, string) ([]models.Repo, string, error) {
 	return f.repos, f.ownerType, f.listErr
+}
+
+func (f fakeResolver) BranchExists(_ context.Context, owner, repo, branch string) (bool, error) {
+	key := owner + "/" + repo + "@" + branch
+	if f.branchCalls != nil {
+		*f.branchCalls = append(*f.branchCalls, key)
+	}
+	if f.branchErr != nil {
+		return false, f.branchErr
+	}
+	return f.presentBranches[key], nil
 }
 
 func TestRunSelectWritesLockfile(t *testing.T) {
@@ -44,7 +60,7 @@ func TestRunSelectWritesLockfile(t *testing.T) {
 
 	err := runSelect(context.Background(), r,
 		targeting{org: "redscaresu", topics: []string{"platform"}},
-		path, "goldfinger test", &out, &errOut)
+		nil, path, "goldfinger test", &out, &errOut)
 	require.NoError(t, err)
 
 	// Only the non-archived platform repo is selected.
@@ -68,7 +84,7 @@ func TestRunSelectPropagatesErrors(t *testing.T) {
 	t.Run("verify error", func(t *testing.T) {
 		err := runSelect(context.Background(),
 			fakeResolver{verifyErr: errors.New("bad token")},
-			targeting{org: "acme", allRepos: true}, path, "t", &bytes.Buffer{}, &bytes.Buffer{})
+			targeting{org: "acme", allRepos: true}, nil, path, "t", &bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "verifying token")
 	})
@@ -76,8 +92,61 @@ func TestRunSelectPropagatesErrors(t *testing.T) {
 	t.Run("list error", func(t *testing.T) {
 		err := runSelect(context.Background(),
 			fakeResolver{listErr: errors.New("not found")},
-			targeting{org: "acme", allRepos: true}, path, "t", &bytes.Buffer{}, &bytes.Buffer{})
+			targeting{org: "acme", allRepos: true}, nil, path, "t", &bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
+}
+
+func TestRunSelectRecordsBranchPresence(t *testing.T) {
+	var calls []string
+	r := fakeResolver{
+		login:     "redscaresu",
+		ownerType: models.OwnerUser,
+		repos: []models.Repo{
+			{Owner: "redscaresu", Name: "on-dev", DefaultBranch: "main", Topics: []string{"platform"}},
+			{Owner: "redscaresu", Name: "default-is-dev", DefaultBranch: "dev", Topics: []string{"platform"}},
+			{Owner: "redscaresu", Name: "no-dev", DefaultBranch: "main", Topics: []string{"platform"}},
+			{Owner: "redscaresu", Name: "archived", DefaultBranch: "main", Topics: []string{"platform"}, Archived: true},
+		},
+		presentBranches: map[string]bool{
+			"redscaresu/on-dev@dev": true,
+			// no-dev has no "dev" entry -> BranchExists returns false
+		},
+		branchCalls: &calls,
+	}
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+
+	// Duplicate --branch-presence dev must be deduped.
+	err := runSelect(context.Background(), r,
+		targeting{org: "redscaresu", topics: []string{"platform"}},
+		[]string{"dev", "dev"}, path, "goldfinger test", &bytes.Buffer{}, &bytes.Buffer{})
+	require.NoError(t, err)
+
+	// dev probed once each for on-dev and no-dev only: the archived repo is not in
+	// the selection, and default-is-dev short-circuits (dev is its default).
+	assert.ElementsMatch(t, []string{"redscaresu/on-dev@dev", "redscaresu/no-dev@dev"}, calls)
+
+	sel, err := selection.Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dev"}, sel.BranchesChecked, "dedup: dev recorded once")
+	require.Len(t, sel.Repos, 3, "archived repo excluded from selection")
+
+	byName := map[string]models.Repo{}
+	for _, repo := range sel.Repos {
+		byName[repo.Name] = repo
+	}
+
+	has, known := byName["on-dev"].RecordedBranch("dev")
+	assert.True(t, known)
+	assert.True(t, has)
+
+	has, known = byName["no-dev"].RecordedBranch("dev")
+	assert.True(t, known)
+	assert.False(t, has)
+
+	// default-is-dev: present-by-definition, recorded without an API call.
+	has, known = byName["default-is-dev"].RecordedBranch("dev")
+	assert.True(t, known)
+	assert.True(t, has)
 }

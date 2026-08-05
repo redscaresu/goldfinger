@@ -13,15 +13,16 @@ import (
 
 func sampleSelection() models.Selection {
 	return models.Selection{
-		Version:    models.SelectionVersion,
-		Owner:      "redscaresu",
-		OwnerType:  "User",
-		Filter:     models.SelectionFilter{Topics: []string{"platform"}},
-		ResolvedAt: time.Date(2026, 8, 1, 15, 0, 0, 0, time.UTC),
-		Tool:       "goldfinger test",
+		Version:         models.SelectionVersion,
+		Owner:           "redscaresu",
+		OwnerType:       "User",
+		Filter:          models.SelectionFilter{Topics: []string{"platform"}},
+		ResolvedAt:      time.Date(2026, 8, 1, 15, 0, 0, 0, time.UTC),
+		Tool:            "goldfinger test",
+		BranchesChecked: []string{"dev"},
 		Repos: []models.Repo{
-			{Owner: "redscaresu", Name: "goldfinger", DefaultBranch: "main", Topics: []string{"platform"}},
-			{Owner: "redscaresu", Name: "simpleAPI", DefaultBranch: "master"},
+			{Owner: "redscaresu", Name: "goldfinger", DefaultBranch: "main", Topics: []string{"platform"}, BranchPresence: map[string]bool{"dev": true}},
+			{Owner: "redscaresu", Name: "simpleAPI", DefaultBranch: "master", BranchPresence: map[string]bool{"dev": false}},
 		},
 	}
 }
@@ -50,6 +51,36 @@ func TestReadUnsupportedVersion(t *testing.T) {
 	_, err := Read(path)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "version")
+}
+
+func TestReadMigratesV1(t *testing.T) {
+	// A v1 lockfile predates branch-presence metadata; Read must accept it and
+	// leave branch facts empty so they read back as "unknown" — never guessed.
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	v1 := `{
+  "version": 1,
+  "owner": "redscaresu",
+  "ownerType": "User",
+  "filter": { "topics": ["platform"] },
+  "resolvedAt": "2026-08-01T15:00:00Z",
+  "tool": "goldfinger v1",
+  "repos": [
+    { "owner": "redscaresu", "name": "goldfinger", "cloneURL": "https://github.com/redscaresu/goldfinger.git", "defaultBranch": "main", "topics": ["platform"] }
+  ]
+}`
+	require.NoError(t, os.WriteFile(path, []byte(v1), 0o644))
+
+	got, err := Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.Version)
+	assert.Empty(t, got.BranchesChecked)
+	require.Len(t, got.Repos, 1)
+	assert.Nil(t, got.Repos[0].BranchPresence)
+
+	// A branch that isn't the default reads as unknown (not guessed).
+	has, known := got.Repos[0].RecordedBranch("dev")
+	assert.False(t, known)
+	assert.False(t, has)
 }
 
 func TestNamedSelectionRegistry(t *testing.T) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// mirrorReportName is the filename `--write-report` writes under the workspace.
+const mirrorReportName = "goldfinger-mirror.json"
+
+// reportOptions selects which machine-readable report outputs a mirror emits.
+type reportOptions struct {
+	toStdout bool // --report-json: print the report JSON to stdout
+	toFile   bool // --write-report: write <workspace>/goldfinger-mirror.json (only on success)
+}
+
 func newMirrorCmd() *cobra.Command {
 	var (
 		selectionPath string
@@ -27,11 +37,18 @@ func newMirrorCmd() *cobra.Command {
 		cloneDepth    int
 		noClean       bool
 		dryRun        bool
+		reportJSON    bool
+		writeReport   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "mirror",
 		Short: "Clone the selection into a local workspace via ghorg",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Pure local flag check first, before any token/tool/selection work,
+			// so an impossible flag combo fails fast without needing a token.
+			if err := validateMirror(mirrorValidation{branch: branch, cloneDepth: cloneDepth}); err != nil {
+				return err
+			}
 			token, source, err := resolveToken(cmd.Context())
 			if err != nil {
 				return err
@@ -58,7 +75,7 @@ func newMirrorCmd() *cobra.Command {
 				CloneDepth:  cloneDepth,
 				NoClean:     noClean,
 				DryRun:      dryRun,
-			}, cmd.ErrOrStderr())
+			}, reportOptions{toStdout: reportJSON, toFile: writeReport}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	addSelectionFlags(cmd, &name, &selectionPath)
@@ -67,22 +84,62 @@ func newMirrorCmd() *cobra.Command {
 	f.StringVar(&purpose, "purpose", "", "ephemeral, timestamped workspace ~/goldfinger/<purpose>-<YYYY-MM-DD-HHMMSS.mmm> (goldfinger stamps the time to the millisecond; you clean the dir up when done); mutually exclusive with --workspace")
 	f.StringVar(&branch, "branch", "", "checkout this branch in every cloned repo (one name for all repos; ghorg leaves a repo on its default branch where the branch is absent). With --purpose it is also folded into the dir name: <purpose>-<branch>-<stamp>. Default: each repo's own default branch")
 	f.IntVar(&concurrency, "concurrency", 0, "concurrent clones (0 = ghorg default)")
-	f.IntVar(&cloneDepth, "clone-depth", 0, "shallow clone depth (0 = full history)")
+	f.IntVar(&cloneDepth, "clone-depth", 0, "shallow clone depth (0 = full history). Incompatible with --branch: a shallow clone only fetches each repo's default branch, so --branch would silently fall back to the default")
 	f.BoolVar(&noClean, "no-clean", false, "preserve local changes in existing clones (skip ghorg's git clean on re-sync)")
 	f.BoolVar(&dryRun, "dry-run", false, "show what ghorg would clone without cloning")
+	f.BoolVar(&reportJSON, "report-json", false, "after a successful, non-dry-run mirror, print a machine-readable JSON report (workspace, owner, repo count, requested branch, and per-repo branch status from the lockfile) to stdout")
+	f.BoolVar(&writeReport, "write-report", false, "after a successful, non-dry-run mirror, write the JSON report to <workspace>/"+mirrorReportName)
 	return cmd
 }
 
 // runMirror frames the mirror phase and delegates to the mirror package. It is
 // the testable core of the mirror command (the Runner seam lets tests exercise
 // it without ghorg installed).
-func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws, token string, opts mirror.Options, errOut io.Writer) error {
+//
+// stdout carries exactly one machine-readable representation of the mirror: the
+// bare workspace path by default, or the JSON report (which already includes the
+// workspace) when --report-json is set. Emitting both would make the JSON
+// unparseable, so the bare path is suppressed in report mode. Human banners and
+// the ghorg child's own output always go to errOut (stderr) to keep stdout
+// clean. The bare path prints before delegating, so it survives a later ghorg
+// failure — callers must check the exit code, not stdout, for success; the JSON
+// report, by contrast, is emitted only after a successful mirror.
+func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws, token string, opts mirror.Options, report reportOptions, out, errOut io.Writer) error {
 	opts.Workspace = ws
+	if !report.toStdout {
+		fmt.Fprintln(out, ws)
+	}
 	banner(errOut, fmt.Sprintf("Mirroring %d repo(s) into %s", len(sel.Repos), ws))
 	if err := mirror.Mirror(ctx, run, sel, token, opts); err != nil {
 		return err
 	}
 	done(errOut, fmt.Sprintf("mirror complete → %s/%s", ws, sel.Owner))
+	return emitMirrorReport(sel, ws, opts, report, out, errOut)
+}
+
+// emitMirrorReport renders the mirror report to the requested sinks. It runs
+// only after a successful, non-dry-run mirror: a report is never left claiming a
+// clone that failed, and a dry-run (which clones nothing and may never create
+// the workspace) produces no report — a --write-report into a non-existent
+// workspace would otherwise fail.
+func emitMirrorReport(sel models.Selection, ws string, opts mirror.Options, report reportOptions, out, errOut io.Writer) error {
+	if opts.DryRun || (!report.toStdout && !report.toFile) {
+		return nil
+	}
+	data, err := json.MarshalIndent(buildMirrorReport(sel, ws, opts), "", "  ")
+	if err != nil {
+		return fmt.Errorf("render mirror report: %w", err)
+	}
+	if report.toStdout {
+		fmt.Fprintln(out, string(data))
+	}
+	if report.toFile {
+		path := filepath.Join(ws, mirrorReportName)
+		if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+			return fmt.Errorf("write mirror report: %w", err)
+		}
+		done(errOut, "report written to "+path)
+	}
 	return nil
 }
 

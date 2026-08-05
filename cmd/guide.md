@@ -28,6 +28,13 @@ WORKFLOW
      Writes ./goldfinger.selection (JSON: owner/name list + provenance) and
      prints the set. --org accepts a GitHub org OR user.
 
+     If you plan to `mirror --branch <b>` (e.g. dev), add `--branch-presence <b>`
+     here so goldfinger records (read-only) which repos actually have that branch
+     and freezes it into the lockfile — the later mirror report then tells you
+     which repos fall back to their default instead of silently missing the
+     branch. These facts are recorded at selection time and can drift; re-select
+     to refresh.
+
   2. Mirror — clone the selection locally (OPTIONAL — for reading/scanning the
      fleet; NOT needed to open PRs. apply clones on its own, see step 3):
        goldfinger mirror
@@ -38,6 +45,22 @@ WORKFLOW
      of each repo's default. It is ONE name applied to all repos: ghorg leaves a
      repo on its default branch where that branch is absent (best-effort "prefer
      dev where it exists", not a per-repo guarantee).
+
+     Do NOT combine --branch with --clone-depth: a shallow clone
+     (--clone-depth 1) fetches only each repo's default branch, so
+     `mirror --branch dev --clone-depth 1` would leave repos on their default
+     wherever dev exists but isn't the default — a silent coverage gap.
+     goldfinger refuses that combination; omit --clone-depth (full depth) when
+     you pass --branch. Shallow is fine for a plain default-branch scan.
+
+     To see which repos got the branch vs fell back, add --report-json (prints a
+     JSON report to stdout instead of the bare workspace-path line) or
+     --write-report (writes <workspace>/goldfinger-mirror.json, only on a
+     successful mirror). The report is built from the lockfile alone (no git, no
+     re-discovery): it lists each repo's branchStatus as has-branch /
+     falls-back-to-default / unknown. "unknown" means the branch wasn't checked
+     at select time (run select --branch-presence <b> first) — goldfinger does
+     NOT guess. Branch facts are recorded at selection time and can drift.
 
      For a one-off mass-PR campaign, use --purpose for an ephemeral, timestamped
      workspace: you supply the purpose, goldfinger stamps the time to the
@@ -64,7 +87,7 @@ WORKFLOW
 
   3. Apply — run a change across the selection and open PRs:
        goldfinger apply --branch bump --commit-message "msg" --pr-title "title" \
-         -- sed -i 's|old|new|g' Dockerfile
+         --sign local -- sed -i 's|old|new|g' Dockerfile
      The command after -- runs in each repo's checkout (via multi-gitter), on
      your machine — keep it portable (`sed -i` differs on macOS/BSD). For
      non-trivial or per-file edits, pass a script: `-- python3 /abs/migrate.py`.
@@ -76,6 +99,25 @@ WORKFLOW
      the real diff rather than trusting the snapshot you inspected.
      With --base-branch omitted, each PR targets that repo's own default branch,
      so a mixed dev/main selection routes correctly per repo.
+
+SIGNING (--sign, REQUIRED — no default)
+  Every apply must state how commits are signed. There is no default on purpose:
+  commit provenance is too important to leave implicit for a fleet-wide change.
+  Three modes, three trust models — the dry-run banner spells out which one is
+  in effect:
+  - --sign local  : real git binary (multi-gitter --git-type=cmd) → signed with
+                     YOUR GPG key, honouring ~/.gitconfig commit.gpgsign /
+                     user.signingkey. "Verified" on GitHub only if that public
+                     key is uploaded. Your gpg-agent must have the passphrase
+                     cached for the whole run — a cold/headless agent can stall
+                     on per-commit pinentry, so warm it first. (--git-type=cmd
+                     runs `git commit` with no -S and no --no-gpg-sign, so your
+                     commit.gpgsign config is honoured — verified against
+                     multi-gitter v0.63.1.)
+  - --sign github : GitHub API push (multi-gitter --api-push) → signed by
+                     GitHub's web-flow key, always "Verified", no local key.
+                     GitHub-only, slower, unsuited to large files.
+  - --sign none   : UNSIGNED (multi-gitter default go-git). Explicit opt-out.
 
 DRIFT CHECK
   A selection is frozen at select time; the world moves on. Before a big mirror
@@ -104,6 +146,9 @@ SAFETY — READ THIS
     may run it — but dry-run first, present the diff, prefer --draft (PRs open
     not-ready-for-review), and pass --dry-run=false --confirm. Otherwise present
     the dry-run result and let the human run the real apply themselves.
+  - --sign is required on every run: pass it explicitly and state which trust
+    model you used (local = your GPG key, github = GitHub's key, none = unsigned)
+    when you present the dry-run or a real run.
 
 NOTES FOR AI AGENTS
   - The selection lockfile is JSON — read it directly for structured state.

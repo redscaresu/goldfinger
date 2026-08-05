@@ -55,8 +55,13 @@ func Read(path string) (models.Selection, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return models.Selection{}, fmt.Errorf("parse selection %s: %w", path, err)
 	}
-	if s.Version != models.SelectionVersion {
-		return models.Selection{}, fmt.Errorf("selection %s has unsupported version %d (this goldfinger understands version %d)", path, s.Version, models.SelectionVersion)
+	// Accept every schema version this goldfinger can read. A v1 lockfile has no
+	// branch-presence metadata; it migrates in memory to empty branch facts,
+	// which read back as "unknown" (RecordedBranch) — never guessed.
+	switch s.Version {
+	case 1, models.SelectionVersion:
+	default:
+		return models.Selection{}, fmt.Errorf("selection %s has unsupported version %d (this goldfinger understands versions 1..%d)", path, s.Version, models.SelectionVersion)
 	}
 	return s, nil
 }

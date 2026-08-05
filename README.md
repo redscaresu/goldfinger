@@ -94,13 +94,13 @@ goldfinger mirror
 # for a one-off campaign, get an ephemeral timestamped snapshot instead:
 #   goldfinger mirror --purpose bump-go   # -> ~/goldfinger/bump-go-<timestamp>/<owner>/
 
-# 3. dry-run the change — shows the diff, opens nothing
+# 3. dry-run the change — shows the diff, opens nothing (--sign is always required)
 goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
-  -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
+  --sign local -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 
 # 4. for real — opens the PRs (requires both flags)
 goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
-  --dry-run=false --confirm -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
+  --sign local --dry-run=false --confirm -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 ```
 
 `goldfinger guide` prints this playbook from the binary itself.
@@ -119,22 +119,35 @@ goldfinger select --org mycompany --all-repos
 - `--all-repos` or `--topic <t>` (repeatable, any-match) — exactly one is
   required. Topic filtering is goldfinger's, applied here and frozen into the
   lockfile; ghorg's and multi-gitter's own topic flags are bypassed.
+- `--branch-presence <name>` (repeatable) — for each named branch, record
+  (read-only) whether it exists on every selected repo, and freeze that into the
+  lockfile so a later `mirror` can report which repos actually have it. Run it
+  for the branch you intend to `mirror --branch`, e.g. `select … --branch-presence
+  dev`. A name equal to a repo's own default branch is present by definition
+  (no API call); duplicates are deduped. These facts are **recorded at selection
+  time and can drift** — re-`select` to refresh them.
 - Writes `goldfinger.selection` and prints the set for review. The lockfile is
   plain JSON — inspect or diff it before mirroring/applying:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "owner": "mycompany",
   "ownerType": "Organization",
   "filter": { "topics": ["platform"] },
   "resolvedAt": "2026-08-01T15:17:53Z",
   "tool": "goldfinger v0.2.0",
+  "branchesChecked": ["dev"],
   "repos": [
-    { "owner": "mycompany", "name": "billing", "cloneURL": "https://github.com/mycompany/billing.git", "defaultBranch": "main", "topics": ["platform"] }
+    { "owner": "mycompany", "name": "billing", "cloneURL": "https://github.com/mycompany/billing.git", "defaultBranch": "main", "topics": ["platform"], "branchPresence": { "dev": true } }
   ]
 }
 ```
+
+`version` is `2`; a `version: 1` lockfile (no `branchesChecked` /
+`branchPresence`) still reads, with every branch treated as **unknown** rather
+than guessed. `branchesChecked` and each repo's `branchPresence` appear only
+when you passed `--branch-presence`.
 
 ### `goldfinger mirror`
 
@@ -164,6 +177,55 @@ each repo's default. It is **one name applied to all repos**: ghorg leaves a rep
 on its default branch where that branch is absent, so it's a best-effort "prefer
 `dev` where it exists", not a per-repo guarantee (the lockfile records each
 repo's own default branch for that).
+
+`--branch` and `--clone-depth` are **incompatible** — goldfinger refuses the
+combination. A shallow clone (`--clone-depth 1`) only fetches each repo's
+**default** branch, so `mirror --branch dev --clone-depth 1` would silently leave
+every repo where `dev` isn't the default on its default branch: a false-coverage
+trap. Omit `--clone-depth` (full depth) when mirroring a non-default `--branch`;
+shallow stays fine for a plain default-branch scan.
+
+The resolved workspace path is printed as a bare absolute path to **stdout**
+(banners and ghorg's own output go to **stderr**), so a script can capture it —
+`ws=$(goldfinger mirror --purpose keyv-cve 2>mirror.log)` — instead of globbing
+for the millisecond-stamped dir. Because the path prints before ghorg runs, check
+the exit code (not stdout) to confirm the clone succeeded.
+
+To know *which* repos actually had the branch (rather than silently falling
+back), record it at `select` time with `--branch-presence <name>` and ask
+`mirror` for a report:
+
+- `--report-json` prints a machine-readable JSON report to **stdout** after a
+  successful mirror. It *replaces* the bare workspace-path line above — stdout
+  carries one or the other, so the JSON stays parseable (the path is a field in
+  the report).
+- `--write-report` writes the same JSON to `<workspace>/goldfinger-mirror.json`
+  (only on success — a failed clone leaves no report).
+
+The report is built **purely from the lockfile** — goldfinger runs no `git` and
+re-runs no discovery — so every fact in it (`workspace`, `owner`, `repoCount`,
+the requested `branch`, and each repo's `branchStatus`) is knowable without
+touching a clone:
+
+```json
+{
+  "workspace": "/Users/me/goldfinger",
+  "owner": "mycompany",
+  "repoCount": 2,
+  "branch": "dev",
+  "branchFactsNote": "branchStatus values come from branch presence recorded at selection time (via `select --branch-presence`) and can drift; \"unknown\" means the branch was not checked then — goldfinger does not guess it here.",
+  "repos": [
+    { "repo": "mycompany/billing", "defaultBranch": "main", "branchStatus": "has-branch" },
+    { "repo": "mycompany/web", "defaultBranch": "main", "branchStatus": "falls-back-to-default" }
+  ]
+}
+```
+
+`branchStatus` is `has-branch` (the branch was present at select time, or is the
+repo's own default), `falls-back-to-default` (absent at select time, so ghorg
+stays on the default), or `unknown` (the branch was never checked at select time
+— an old lockfile, or no `--branch-presence` for it; goldfinger does **not**
+guess). With no `--branch`, every repo reports `default-branch`.
 
 **For a one-off mass-PR campaign, use `--purpose` for an ephemeral, timestamped
 workspace** — you supply the purpose, goldfinger stamps the time to the
@@ -208,6 +270,7 @@ Reads the lockfile and runs a change across exactly that set via multi-gitter.
 goldfinger apply --branch bump-go-1.24 \
   --commit-message "Bump golang base image to 1.24" \
   --pr-title "Bump golang base image to 1.24" \
+  --sign local \
   -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 ```
 
@@ -236,6 +299,29 @@ rather than trusting the mirror snapshot. (`check` catches *selection* drift, no
 - Other PR options: `--pr-body` (or `--pr-body-file <path>` to load a long body
   from a file — the two are mutually exclusive), `--label` / `--reviewer`
   (repeatable), `--draft`.
+- **Signing (`--sign`, required — no default).** Every run must state how commits
+  are signed; there is deliberately no default, because commit provenance is not
+  a safe thing to leave implicit for a fleet-wide, hard-to-reverse action. Three
+  modes, each with a different trust model:
+  - `--sign local` — runs the change through the real `git` binary
+    (multi-gitter `--git-type=cmd`), so your `~/.gitconfig` `commit.gpgsign` /
+    `user.signingkey` apply and each commit is signed with **your own GPG key**.
+    It shows as "Verified" on GitHub only if that public key is uploaded to your
+    account. Trade-offs: your `gpg-agent` must have the passphrase cached for the
+    whole run — a cold or kicked agent (e.g. a headless/background session) can
+    stall on per-commit `pinentry`; warm it first (`echo test | gpg --clearsign
+    >/dev/null`). *(Verified against multi-gitter v0.63.1: `--git-type=cmd` runs
+    `git commit` with no `-S` and no `--no-gpg-sign`, so your `commit.gpgsign`
+    config is what signs the commit. This relies on goldfinger not passing
+    `--author-name`/`--author-email`, which would strip the commit's environment
+    and break signing.)*
+  - `--sign github` — pushes commits through the GitHub API (multi-gitter
+    `--api-push`), signed by **GitHub's own web-flow key** (always "Verified", no
+    local key or `pinentry`). GitHub-only, slower, and **unsuited to large
+    files** — and it interacts with the same secondary rate limits as PR creation
+    (see below).
+  - `--sign none` — **unsigned** commits (multi-gitter's default `go-git` path).
+    An explicit, deliberate opt-out; the dry-run banner flags it loudly.
 - **Safety:** `apply` defaults to `--dry-run` (shows the change, opens nothing). A
   real run requires **both** `--dry-run=false` **and** `--confirm` — the guard
   against an accidental fleet-wide PR blast. A real run should always follow a
@@ -362,12 +448,10 @@ the operator playbook.
   install instructions if missing.
 - A **git identity** (`git config user.name` / `user.email`) — multi-gitter
   authors the `apply` commit from it.
-- **A GitHub token** for API discovery, mapped to the env vars ghorg
-  (`GHORG_GITHUB_TOKEN`) and multi-gitter (`GITHUB_TOKEN`) expect, so you set one
-  token, not three. By default goldfinger reuses your local `gh auth login`
-  session automatically — nothing to set. Setting `GOLD_FINGER_PAT` overrides
-  that and is the fallback when you have no local gh login or you're running in
-  CI.
+- **A GitHub token** for API discovery. goldfinger reuses your local
+  `gh auth login` session by default and maps the token to the env vars ghorg
+  (`GHORG_GITHUB_TOKEN`) and multi-gitter (`GITHUB_TOKEN`) expect; set
+  `GOLD_FINGER_PAT` when there's no local gh login, such as in CI.
 
 ## For AI agents
 
@@ -393,10 +477,3 @@ and `CLAUDE.md`.
 
 - `IMPLEMENTATION.md` — the build plan: package layout, the selection format, the
   ghorg/multi-gitter handoffs, build order, and pinned decisions.
-
-## Non-goals (v0.1)
-
-- No reimplementation of clone/pull or PR machinery (delegated by design).
-- github.com only; GHES is a later base-URL change.
-- No long-running service — the lockfile is the only persisted state, and
-  `mirror`/`apply` recompute nothing.

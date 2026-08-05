@@ -26,6 +26,7 @@ func newApplyCmd() *cobra.Command {
 		prBodyFile    string
 		labels        []string
 		reviewers     []string
+		sign          string
 		draft         bool
 		dryRun        bool
 		confirm       bool
@@ -46,6 +47,7 @@ func newApplyCmd() *cobra.Command {
 				branch:        branch,
 				commitMessage: commitMessage,
 				prTitle:       prTitle,
+				sign:          sign,
 				script:        script,
 			}); err != nil {
 				return err
@@ -85,6 +87,7 @@ func newApplyCmd() *cobra.Command {
 				Draft:         draft,
 				DryRun:        dryRun,
 				Script:        script,
+				Sign:          sign,
 				BatchSize:     batchSize,
 				BatchPause:    batchPause,
 			}
@@ -101,6 +104,7 @@ func newApplyCmd() *cobra.Command {
 	f.StringVar(&prBodyFile, "pr-body-file", "", "read the pull request body from a file (mutually exclusive with --pr-body)")
 	f.StringArrayVar(&labels, "label", nil, "label to add to every PR (repeatable)")
 	f.StringArrayVar(&reviewers, "reviewer", nil, "reviewer to request: user or org/team (repeatable)")
+	f.StringVar(&sign, "sign", "", "how to sign commits (required): local (your GPG key via git), github (GitHub-verified via API), or none (unsigned)")
 	f.BoolVar(&draft, "draft", false, "open PRs as drafts")
 	f.BoolVar(&dryRun, "dry-run", true, "run without pushing or opening PRs (default; pass --dry-run=false for a real run)")
 	f.BoolVar(&confirm, "confirm", false, "required alongside --dry-run=false to actually open PRs")
@@ -121,6 +125,7 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 		baseLabel = "each repo's default branch"
 	}
 	banner(errOut, fmt.Sprintf("Applying to %d repo(s) [%s] onto base %s", len(sel.Repos), mode, baseLabel))
+	fmt.Fprintf(errOut, "  signing: %s\n", signTrust(spec.Sign))
 	if spec.BatchSize > 0 && spec.BatchSize < len(sel.Repos) {
 		fmt.Fprintf(errOut, "  throttling: batches of %d, pausing %s between them (stays under GitHub's 80 writes/min; the 500/hour ceiling still needs a re-run to resume)\n", spec.BatchSize, spec.BatchPause)
 	}
@@ -142,6 +147,22 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 	}
 	done(errOut, "apply complete")
 	return nil
+}
+
+// signTrust renders the signing mode and its trust model for the dry-run banner,
+// so the operator sees exactly whose key vouches for each commit before a real
+// run. Mirrors the mapping in apply.buildArgs.
+func signTrust(mode string) string {
+	switch mode {
+	case models.SignLocal:
+		return "local — commits signed with your GPG key (Verified on GitHub only if that public key is uploaded)"
+	case models.SignGitHub:
+		return "github — commits GitHub-verified (signed with GitHub's key via the API; GitHub-only, slower, unsuited to large files)"
+	case models.SignNone:
+		return "none — commits are UNSIGNED"
+	default:
+		return mode
+	}
 }
 
 // resolvePRBody picks the PR body from either the inline --pr-body or the

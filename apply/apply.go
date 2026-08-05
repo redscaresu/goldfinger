@@ -129,7 +129,37 @@ func buildArgs(s models.Selection, spec models.ApplySpec, scriptPath, configPath
 	if spec.DryRun {
 		args = append(args, "--dry-run")
 	}
+	args = append(args, signArgs(spec.Sign)...)
 	return args
+}
+
+// signArgs maps a signing mode onto the multi-gitter flag that produces it. An
+// unrecognised mode (including SignNone) adds nothing — cmd/ validates the value
+// up front, so the default here is the safe unsigned path.
+func signArgs(mode string) []string {
+	switch mode {
+	case models.SignGitHub:
+		// --api-push commits through the GitHub API, which signs with GitHub's
+		// web-flow key (always "Verified"). GitHub-only, slower, unsuited to large
+		// files.
+		return []string{"--api-push"}
+	case models.SignLocal:
+		// --git-type=cmd makes multi-gitter commit via the real git binary:
+		// `git add .` then `git commit --no-verify -m <msg>` (multi-gitter
+		// v0.63.1, internal/git/cmdgit). It passes no -S and no --no-gpg-sign, so
+		// git honours the operator's ~/.gitconfig commit.gpgsign / user.signingkey
+		// and signs with their own GPG key. Verified empirically against v0.63.1.
+		//
+		// This holds ONLY because goldfinger never passes --author-name /
+		// --author-email: multi-gitter reduces the commit's env to just
+		// GIT_AUTHOR/COMMITTER_* when an author is set, stripping HOME/GPG_TTY and
+		// breaking signing. Do not add author flags to buildArgs without
+		// re-verifying.
+		return []string{"--git-type=cmd"}
+	default:
+		// SignNone: no signing flag, multi-gitter's default go-git (unsigned) path.
+		return nil
+	}
 }
 
 // writeScript wraps the inline command in a POSIX script file, because

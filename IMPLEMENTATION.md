@@ -52,7 +52,7 @@ goldfinger mirror [--selection <path>]
                   [--purpose <name>]     # ephemeral ~/goldfinger/<purpose>[-<branch>]-<YYYY-MM-DD-HHMMSS.mmm>; excl. with --workspace
                   [--branch <name>]      # ghorg --branch: checkout this branch in every repo (default: each repo's own)
                   [--concurrency N]      # passthrough to ghorg
-                  [--clone-depth N]      # passthrough to ghorg (shallow)
+                  [--clone-depth N]      # passthrough to ghorg (shallow); incompatible with --branch
                   [--no-clean]           # preserve local edits in existing clones
                   [--dry-run]            # show what ghorg would clone
 
@@ -62,6 +62,7 @@ goldfinger apply  [--selection <path>]
                   --pr-title <title>
                   [--pr-body <body>]
                   [--label <l>...] [--reviewer <r>...] [--draft]
+                  --sign local|github|none # REQUIRED, no default: how commits are signed
                   [--dry-run]            # DEFAULT true; must pass --dry-run=false to open PRs
                   -- <command> [args...] # the per-repo script for multi-gitter
 ```
@@ -72,7 +73,15 @@ Flag rules (enforced in `cmd/` before any external call):
 - `select`: `--org` required; exactly one of `--all-repos` / `--topic`.
 - `mirror` / `apply`: the selection file must exist and parse (tell the user to
   run `select` first if not).
-- `apply`: `--branch`, `--commit-message`, `--pr-title`, and a script after `--`.
+- `mirror`: `--branch` and `--clone-depth > 0` are mutually exclusive. A ghorg
+  shallow clone fetches only each repo's default branch, so `--branch` would
+  silently fall back to the default; refuse the combo (don't quietly promote to
+  full depth). `mirror` also prints the resolved workspace path as a bare
+  absolute line on stdout (banners + ghorg output stay on stderr) so scripts can
+  capture it without globbing the stamped dir.
+- `apply`: `--branch`, `--commit-message`, `--pr-title`, a script after `--`, and
+  `--sign` set to one of `local` / `github` / `none` (required, no default — a
+  real run must declare its signing intent).
 
 ## Package layout
 
@@ -99,8 +108,12 @@ type Repo struct {
     Owner, Name, CloneURL, DefaultBranch string
     Topics   []string
     Archived bool
+    BranchPresence map[string]bool // v2: per-branch presence recorded at select time
 }
 func (r Repo) FullName() string // "owner/name"
+// RecordedBranch(branch) (has, known bool): known is false for a branch never
+// checked at select time (old v1 lockfile, or no --branch-presence) — never guess.
+func (r Repo) RecordedBranch(branch string) (has, known bool)
 
 type SelectionFilter struct {
     AllRepos bool
@@ -108,13 +121,14 @@ type SelectionFilter struct {
 }
 
 type Selection struct {
-    Version    int             // schema version, start at 1
+    Version    int             // schema version; 2 (v1 still readable)
     Owner      string          // org or user login
     OwnerType  string          // "User" | "Organization"
     Filter     SelectionFilter
     ResolvedAt time.Time
     Tool       string          // e.g. "goldfinger dev"
     Repos      []Repo
+    BranchesChecked []string   // v2: branch names probed via `select --branch-presence`
 }
 
 type ApplySpec struct {
@@ -122,6 +136,7 @@ type ApplySpec struct {
     Labels, Reviewers []string
     Draft, DryRun     bool
     Script            []string
+    Sign              string // "local" | "github" | "none" (SignLocal/SignGitHub/SignNone)
 }
 ```
 
@@ -133,6 +148,9 @@ which dispatches on owner type: authenticated user → `/user/repos`
 (`affiliation=owner`, includes private); other user → `/users/{u}/repos`; org →
 `/orgs/{o}/repos`. Paginates via `Response.NextPage`. Topics come back in the
 listing (preview header is set by go-github). Returns `[]models.Repo`.
+`BranchExists(ctx, owner, repo, branch) (bool, error)` is a read-only
+`Repositories.GetBranch` — 404 → `(false, nil)`, other errors propagate — used
+by `select --branch-presence` to freeze branch facts into the v2 lockfile.
 
 ### discovery  [BUILT]
 
@@ -148,7 +166,16 @@ func Read(path string) (models.Selection, error)     // parse + validate Version
 
 The lockfile is the shared artifact. JSON so it's reviewable and round-trips in a
 test. `Read` errors clearly if the file is missing ("run `goldfinger select`
-first") or the schema version is unknown.
+first") or the schema version is unknown. It accepts **v1 and v2**: a v1 lockfile
+(no branch metadata) migrates in memory to empty branch facts, which read back as
+"unknown" (never guessed).
+
+Mirror report flow: `mirror --report-json` / `--write-report` emit a
+machine-readable report built by the pure `cmd/buildMirrorReport(sel, ws, opts)`
+(stdlib `encoding/json`), rendered only after a successful mirror. It reports
+only lockfile-knowable facts — workspace, owner, repo count, requested branch,
+and each repo's `branchStatus` (has-branch / falls-back-to-default / unknown /
+default-branch) derived from `Repo.RecordedBranch`. No git, no re-discovery.
 
 ### mirror
 
@@ -176,6 +203,9 @@ func Apply(ctx, s models.Selection, spec models.ApplySpec, token string) error
   `s.Repos`, plus `--branch`, `--commit-message`, `--pr-title`, and any
   `--pr-body` / `--label` / `--reviewer` / `--draft`. Adds `--dry-run` when
   `spec.DryRun`.
+- Maps `spec.Sign` onto the signing mechanism: `github` → `--api-push` (GitHub's
+  web-flow key), `local` → `--git-type=cmd` (real git binary, operator's GPG
+  key), `none` → nothing (multi-gitter's default go-git, unsigned).
 - Token via child env `GITHUB_TOKEN`.
 - **Scale caveat:** multi-gitter has no repo-list-file input, so the set is
   passed as repeated `--repo` flags. Fine for hundreds; if `len(s.Repos)` exceeds

@@ -48,6 +48,47 @@ func TestResolveToken(t *testing.T) {
 	})
 }
 
+func TestValidateMirror(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      mirrorValidation
+		wantErr string
+	}{
+		{
+			name: "no branch, no depth",
+			in:   mirrorValidation{},
+		},
+		{
+			name: "branch without shallow depth",
+			in:   mirrorValidation{branch: "dev"},
+		},
+		{
+			name: "shallow depth without branch",
+			in:   mirrorValidation{cloneDepth: 1},
+		},
+		{
+			name: "branch with explicit full depth",
+			in:   mirrorValidation{branch: "dev", cloneDepth: 0},
+		},
+		{
+			name:    "branch with shallow depth",
+			in:      mirrorValidation{branch: "dev", cloneDepth: 1},
+			wantErr: "--clone-depth",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMirror(tt.in)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
 func TestAnnounceTokenSource(t *testing.T) {
 	var buf bytes.Buffer
 	announceTokenSource(&buf, tokenSourceGh)
