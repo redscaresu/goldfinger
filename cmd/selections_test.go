@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -36,5 +40,58 @@ func TestSelectionsCommand(t *testing.T) {
 		assert.Contains(t, out, "acme")
 		assert.Contains(t, out, "2") // repo count
 		assert.Contains(t, out, "2026-08-01")
+	})
+}
+
+func TestSelectionsJSON(t *testing.T) {
+	t.Run("empty registry is an empty list, not an error", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		var buf bytes.Buffer
+		require.NoError(t, emitSelectionsJSON(&buf, nil))
+		var rep selectionsReport
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &rep))
+		assert.Equal(t, selectionsReportVersion, rep.Version)
+		assert.NotNil(t, rep.Selections)
+		assert.Empty(t, rep.Selections)
+	})
+
+	t.Run("readable and unreadable entries", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+		good, err := selection.PathForName("platform")
+		require.NoError(t, err)
+		require.NoError(t, selection.Write(good, models.Selection{
+			Version:    models.SelectionVersion,
+			Owner:      "acme",
+			ResolvedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			Repos:      []models.Repo{{Owner: "acme", Name: "a"}, {Owner: "acme", Name: "b"}},
+		}))
+		// A malformed entry must be represented inline with an error, not dropped.
+		dir, err := selection.Dir()
+		require.NoError(t, err)
+		bad := filepath.Join(dir, "broken.json")
+		require.NoError(t, os.WriteFile(bad, []byte("{not json"), 0o644))
+
+		names, err := selection.Names()
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		require.NoError(t, emitSelectionsJSON(&buf, names))
+		var rep selectionsReport
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &rep))
+
+		byName := map[string]selectionEntryJSON{}
+		for _, e := range rep.Selections {
+			byName[e.Name] = e
+		}
+		require.Contains(t, byName, "platform")
+		assert.Equal(t, "acme", byName["platform"].Owner)
+		require.NotNil(t, byName["platform"].RepoCount, "a readable entry always carries repoCount")
+		assert.Equal(t, 2, *byName["platform"].RepoCount)
+		assert.Empty(t, byName["platform"].Error)
+
+		require.Contains(t, byName, "broken")
+		assert.NotEmpty(t, byName["broken"].Error, "unreadable entry carries an error, not dropped")
+		assert.Nil(t, byName["broken"].RepoCount, "an unreadable entry has null repoCount, distinguishing it from a zero-repo selection")
 	})
 }

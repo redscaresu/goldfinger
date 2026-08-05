@@ -102,6 +102,20 @@ func TestRunMirror(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ghorg blew up")
 	})
+
+	t.Run("empty selection fails with no misleading stdout", func(t *testing.T) {
+		empty := models.Selection{Owner: "redscaresu", OwnerType: models.OwnerUser}
+		called := false
+		run := func(_ context.Context, _ string, _, _ []string) error { called = true; return nil }
+		var out, errOut bytes.Buffer
+		err := runMirror(context.Background(), run, empty, "/tmp/ws", "tok", mirror.Options{}, reportOptions{}, &out, &errOut)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "selection is empty")
+		// The workspace path must NOT have been printed — an agent reading stdout
+		// would otherwise think a mirror happened.
+		assert.Empty(t, out.String(), "no machine stdout before failing on empty selection")
+		assert.False(t, called, "delegate must not be invoked for an empty selection")
+	})
 }
 
 func TestBuildMirrorReportCategorises(t *testing.T) {
@@ -214,9 +228,12 @@ func TestRunMirrorReport(t *testing.T) {
 }
 
 func TestMirrorCmdMissingToken(t *testing.T) {
-	// The token guard returns before any tool/network use, so this is
-	// deterministic regardless of whether ghorg is installed.
-	_, err := executeCmd(t, "", "mirror")
+	// Local guards (flag combos, selection read, workspace) run before auth, so a
+	// readable selection is needed to reach the token check. resolveToken precedes
+	// the ghorg probe, so this stays deterministic regardless of whether ghorg is
+	// installed.
+	sel := writeSelection(t)
+	_, err := executeCmd(t, "", "mirror", "--selection", sel)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GOLD_FINGER_PAT")
 }

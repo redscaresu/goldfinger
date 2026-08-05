@@ -8,10 +8,12 @@ import (
 
 // ANSI styles, emitted only when writing to a TTY with NO_COLOR unset.
 const (
-	cReset = "\033[0m"
-	cBold  = "\033[1m"
-	cGreen = "\033[32m"
-	cCyan  = "\033[36m"
+	cReset  = "\033[0m"
+	cBold   = "\033[1m"
+	cGreen  = "\033[32m"
+	cCyan   = "\033[36m"
+	cRed    = "\033[31m"
+	cYellow = "\033[33m"
 )
 
 // writerIsTTY reports whether w is a terminal. In tests the command output is a

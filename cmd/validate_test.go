@@ -90,9 +90,41 @@ func TestValidateMirror(t *testing.T) {
 }
 
 func TestAnnounceTokenSource(t *testing.T) {
+	// Clear ambient tokens so this exercises the plain source line (the CI/host
+	// env may itself set GITHUB_TOKEN, which would otherwise trip the warning).
+	for _, v := range ambientTokenVars {
+		t.Setenv(v, "")
+	}
 	var buf bytes.Buffer
 	announceTokenSource(&buf, tokenSourceGh)
 	assert.Equal(t, "auth: using local gh session (gh auth token)\n", buf.String())
+}
+
+func TestAmbientTokenWarning(t *testing.T) {
+	t.Run("gh source with ambient token warns", func(t *testing.T) {
+		for _, v := range ambientTokenVars {
+			t.Setenv(v, "")
+		}
+		t.Setenv("GITHUB_TOKEN", "ghp_ambient")
+		warn := ambientTokenWarning(tokenSourceGh)
+		require.NotEmpty(t, warn)
+		assert.Contains(t, warn, "GITHUB_TOKEN")
+		assert.Contains(t, warn, tokenEnvVar)
+	})
+
+	t.Run("PAT source never warns", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "ghp_ambient")
+		// GOLD_FINGER_PAT is goldfinger's own explicit input, so an ambient token
+		// is irrelevant to its resolution and must not raise a warning.
+		assert.Empty(t, ambientTokenWarning(tokenSourceEnv))
+	})
+
+	t.Run("gh source without ambient token is quiet", func(t *testing.T) {
+		for _, v := range ambientTokenVars {
+			t.Setenv(v, "")
+		}
+		assert.Empty(t, ambientTokenWarning(tokenSourceGh))
+	})
 }
 
 func TestValidateTargeting(t *testing.T) {

@@ -32,6 +32,7 @@ const branchFactsNote = "branchStatus values come from branch presence recorded 
 // knowable from the lockfile and the resolved options alone: goldfinger runs no
 // git and re-runs no discovery to build it.
 type mirrorReport struct {
+	Version         int              `json:"version"`
 	Workspace       string           `json:"workspace"`
 	Owner           string           `json:"owner"`
 	RepoCount       int              `json:"repoCount"`
@@ -52,6 +53,7 @@ type mirrorRepoInfo struct {
 // testable and provably free of git/discovery calls.
 func buildMirrorReport(sel models.Selection, ws string, opts mirror.Options) mirrorReport {
 	rep := mirrorReport{
+		Version:   mirrorReportVersion,
 		Workspace: ws,
 		Owner:     sel.Owner,
 		RepoCount: len(sel.Repos),

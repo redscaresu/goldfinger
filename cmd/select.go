@@ -38,6 +38,8 @@ func newSelectCmd() *cobra.Command {
 		selectionPath   string
 		name            string
 		branchesToCheck []string
+		allowEmpty      bool
+		asJSON          bool
 	)
 	cmd := &cobra.Command{
 		Use:   "select",
@@ -59,31 +61,85 @@ func newSelectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runSelect(cmd.Context(), c, t, branchesToCheck, path, "goldfinger "+version, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runSelect(cmd.Context(), c, selectOpts{
+				t:               t,
+				branchesToCheck: branchesToCheck,
+				selectionPath:   path,
+				tool:            "goldfinger " + version,
+				source:          source,
+				allowEmpty:      allowEmpty,
+				asJSON:          asJSON,
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	addTargetingFlags(cmd, &t)
 	addSelectionFlags(cmd, &name, &selectionPath)
 	cmd.Flags().StringArrayVar(&branchesToCheck, "branch-presence", nil,
 		"record (read-only) whether this branch exists on each selected repo, frozen into the lockfile for a later `mirror --branch` (repeatable). Facts are recorded at selection time and can drift")
+	cmd.Flags().BoolVar(&allowEmpty, "allow-empty", false,
+		"write a lockfile even when the filter matches zero repos (default: a zero-repo result is an error, since it usually means a wrong token/owner/topic rather than an intended empty fleet)")
+	cmd.Flags().BoolVar(&asJSON, "json", false,
+		"emit the written selection as JSON on stdout (a {selectionPath, selection} wrapper; the selection is the full lockfile) instead of the plain repo list; banners stay on stderr")
 	return cmd
+}
+
+// selectOpts groups the inputs to runSelect so the core stays under the project's
+// per-function parameter budget as select grows auth/empty-guard knobs.
+type selectOpts struct {
+	t               targeting
+	branchesToCheck []string
+	selectionPath   string
+	tool            string
+	source          string // resolved token source, for the auth banner + empty diagnostic
+	allowEmpty      bool
+	asJSON          bool
+}
+
+// selectJSONReport is the --json shape for select: a wrapper carrying the on-disk
+// path plus the full lockfile object exactly as persisted. The lockfile is nested
+// (not flattened) so `selection` is structurally identical to the written
+// goldfinger.selection, and its own `version` field is the payload version — this
+// is the one machine surface without a separate top-level version (issue #27 §4).
+type selectJSONReport struct {
+	SelectionPath string           `json:"selectionPath"`
+	Selection     models.Selection `json:"selection"`
 }
 
 // runSelect resolves the target repos, filters them, annotates the selected set
 // with any requested branch-presence facts, and writes the selection lockfile.
 // It is the testable core of the select command.
-func runSelect(ctx context.Context, r branchResolver, t targeting, branchesToCheck []string, selectionPath, tool string, out, errOut io.Writer) error {
+func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut io.Writer) error {
+	t := o.t
 	banner(errOut, "Resolving selection for "+t.org)
-	if _, err := r.Verify(ctx); err != nil {
+	login, err := r.Verify(ctx)
+	if err != nil {
 		return fmt.Errorf("verifying token: %w", err)
 	}
+	announcePrincipal(errOut, login)
 	repos, ownerType, err := r.ListRepos(ctx, t.org)
 	if err != nil {
 		return err
 	}
 	selected := discovery.Select(repos, discovery.Filter{AllRepos: t.allRepos, Topics: t.topics})
 
-	branches := dedupeNonEmpty(branchesToCheck)
+	// A zero-repo result is almost always a mistake (wrong token identity, wrong
+	// owner, or a topic that matches nothing) rather than an intended empty fleet.
+	// Failing here — instead of silently writing an empty lockfile that a later
+	// mirror/apply would treat as "nothing to do" — turns a silent no-op into a
+	// diagnosable error. --allow-empty is the escape hatch for the rare intended case.
+	if len(selected) == 0 && !o.allowEmpty {
+		return emptySelectionError(o.source, login, t)
+	}
+
+	// discovery.Select returns a nil slice for zero matches; with --allow-empty
+	// that would serialise as "repos": null. Normalise to an empty slice so the
+	// lockfile (and select --json) always carry a JSON array, which is what a
+	// machine consumer expects.
+	if selected == nil {
+		selected = []models.Repo{}
+	}
+
+	branches := dedupeNonEmpty(o.branchesToCheck)
 	if err := annotateBranchPresence(ctx, r, selected, branches, errOut); err != nil {
 		return err
 	}
@@ -94,19 +150,47 @@ func runSelect(ctx context.Context, r branchResolver, t targeting, branchesToChe
 		OwnerType:       ownerType,
 		Filter:          models.SelectionFilter{AllRepos: t.allRepos, Topics: t.topics},
 		ResolvedAt:      time.Now().UTC(),
-		Tool:            tool,
+		Tool:            o.tool,
 		Repos:           selected,
 		BranchesChecked: branches,
 	}
-	if err := selection.Write(selectionPath, sel); err != nil {
+	if err := selection.Write(o.selectionPath, sel); err != nil {
 		return err
 	}
 
-	for _, repo := range selected {
-		fmt.Fprintln(out, repo.FullName())
+	if o.asJSON {
+		if err := emitJSON(out, selectJSONReport{SelectionPath: o.selectionPath, Selection: sel}); err != nil {
+			return err
+		}
+	} else {
+		for _, repo := range selected {
+			fmt.Fprintln(out, repo.FullName())
+		}
 	}
-	done(errOut, fmt.Sprintf("%d repo(s) written to %s", len(selected), selectionPath))
+	done(errOut, fmt.Sprintf("%d repo(s) written to %s", len(selected), o.selectionPath))
 	return nil
+}
+
+// emptySelectionError builds a diagnostic for a zero-repo result that names the
+// identity and inputs in play and the usual causes, so an operator (or agent)
+// can tell "wrong token" from "wrong topic" from "genuinely empty" at a glance
+// rather than staring at a silent, empty lockfile.
+func emptySelectionError(source, login string, t targeting) error {
+	var filter string
+	if t.allRepos {
+		filter = "all repos"
+	} else {
+		filter = fmt.Sprintf("topic(s) %v", t.topics)
+	}
+	who := login
+	if who == "" {
+		who = "unknown"
+	}
+	return fmt.Errorf("no repositories matched %s for owner %q (authenticated as %s via %s). "+
+		"Common causes: the token is a different identity than expected, the owner name is wrong, "+
+		"or the topic matches nothing. Verify the identity above, check the owner, and confirm the "+
+		"topic on GitHub. If an empty selection is genuinely intended, re-run with --allow-empty",
+		filter, t.org, who, source)
 }
 
 // annotateBranchPresence records, for each selected repo, whether each requested

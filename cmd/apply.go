@@ -32,16 +32,15 @@ func newApplyCmd() *cobra.Command {
 		confirm       bool
 		batchSize     int
 		batchPause    time.Duration
+		planJSON      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "apply [flags] -- command [args...]",
 		Short: "Run a change across the selection and open PRs via multi-gitter",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token, source, err := resolveToken(cmd.Context())
-			if err != nil {
-				return err
-			}
-			announceTokenSource(cmd.ErrOrStderr(), source)
+			// Pure/local validation first — flags, mutual exclusions, the confirm
+			// safety guard — so a bad invocation fails without resolving a token
+			// (which can shell out to `gh`) or hitting the network.
 			script := scriptArgs(cmd, args)
 			if err := validateApply(applyValidation{
 				branch:        branch,
@@ -65,15 +64,28 @@ func newApplyCmd() *cobra.Command {
 			if !dryRun && !confirm {
 				return errors.New("refusing to open PRs: re-run with --confirm to disable the dry-run safety, or keep --dry-run")
 			}
-			if err := requireTool("multi-gitter", "https://github.com/lindell/multi-gitter#installation"); err != nil {
-				return err
-			}
 			path, err := resolveSelectionPath(name, selectionPath)
 			if err != nil {
 				return err
 			}
 			sel, err := selection.Read(path)
 			if err != nil {
+				return err
+			}
+			// Only now resolve auth — after every pure/local guard (flag combos,
+			// PR-body, confirm, selection read) has passed. resolveToken is placed
+			// before requireTool so a missing token fails independently of whether
+			// multi-gitter is installed. A wrong principal is apply's costliest
+			// mistake, so we verify and print it right before delegating.
+			token, source, err := resolveToken(cmd.Context())
+			if err != nil {
+				return err
+			}
+			announceTokenSource(cmd.ErrOrStderr(), source)
+			if err := requireTool("multi-gitter", "https://github.com/lindell/multi-gitter#installation"); err != nil {
+				return err
+			}
+			if err := verifyAndAnnouncePrincipal(cmd.Context(), cmd.ErrOrStderr(), token); err != nil {
 				return err
 			}
 			spec := models.ApplySpec{
@@ -91,7 +103,7 @@ func newApplyCmd() *cobra.Command {
 				BatchSize:     batchSize,
 				BatchPause:    batchPause,
 			}
-			return runApply(cmd.Context(), execRun, sel, spec, token, cmd.ErrOrStderr())
+			return runApply(cmd.Context(), execRun, sel, spec, token, planJSON, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	addSelectionFlags(cmd, &name, &selectionPath)
@@ -110,12 +122,18 @@ func newApplyCmd() *cobra.Command {
 	f.BoolVar(&confirm, "confirm", false, "required alongside --dry-run=false to actually open PRs")
 	f.IntVar(&batchSize, "batch-size", 0, "open PRs in batches of this many repos to stay under GitHub rate limits (0 = one run over the whole selection)")
 	f.DurationVar(&batchPause, "batch-pause", 0, "pause between batches, e.g. 60s (only used with --batch-size)")
+	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run diff on stderr")
 	return cmd
 }
 
 // runApply frames the apply phase and delegates to the apply package. It is the
 // testable core of the apply command.
-func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec models.ApplySpec, token string, errOut io.Writer) error {
+//
+// When planJSON is set, the machine-readable plan (what goldfinger will invoke) is
+// written to out (stdout) before delegating — it supplements, and never replaces,
+// multi-gitter's own dry-run diff (which execRun streams to stderr). It is not a
+// metadata-only short-circuit: apply.Apply still runs.
+func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec models.ApplySpec, token string, planJSON bool, out, errOut io.Writer) error {
 	mode := "LIVE — opening PRs"
 	if spec.DryRun {
 		mode = "dry-run — no push, no PRs"
@@ -141,6 +159,15 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 	// drift rather than presenting them as the guaranteed target.
 	if spec.BaseBranch == "" {
 		fmt.Fprintln(errOut, "  (branches shown are each repo's default recorded at selection; multi-gitter targets the live default at run time)")
+	}
+	// The plan goes to stdout (banners above went to stderr) so an agent can parse
+	// it cleanly. It is emitted before delegating so it survives a later
+	// multi-gitter failure, and it does not short-circuit the run — apply.Apply
+	// still executes so the operator/agent also gets the authorization dry-run diff.
+	if planJSON {
+		if err := emitJSON(out, buildApplyPlan(sel, spec)); err != nil {
+			return err
+		}
 	}
 	if err := apply.Apply(ctx, run, sel, spec, token); err != nil {
 		return err
