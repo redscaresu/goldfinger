@@ -51,3 +51,11 @@ func done(w io.Writer, msg string) {
 	s := newStyler(w)
 	fmt.Fprintf(w, "%s %s\n", s.paint(cGreen, "✓"), msg)
 }
+
+// warn prints a caution line (to stderr — stdout stays reserved for data). It is
+// for outcomes worth the operator's attention that are not hard failures, e.g. a
+// mirror that under-covered its selection.
+func warn(w io.Writer, msg string) {
+	s := newStyler(w)
+	fmt.Fprintf(w, "%s %s\n", s.paint(cYellow, "⚠"), msg)
+}

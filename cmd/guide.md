@@ -57,6 +57,19 @@ WORKFLOW
      Repos land in <workspace>/<owner> (default workspace ~/goldfinger).
      Re-run any time to refresh (ghorg pulls existing clones).
 
+     When ghorg finishes, goldfinger prints its own reconciliation line, e.g.
+       ✓ reconciliation: in selection: 59 | on disk: 59 | branch present: 15 | fell back: 44
+     Read THIS, not ghorg's "N new clones" — ghorg counts only *newly* cloned
+     repos, so a re-mirror of an unchanged fleet says "0 new clones" while all 59
+     are present. "in selection" is the lockfile count; "on disk" is a read-only
+     count of how many of those repos actually landed under <workspace>/<owner>
+     (no git). If on disk < in selection, goldfinger warns (⚠) that the mirror
+     under-covered the selection — scroll up for ghorg's clone errors, then
+     re-run. With --branch, "branch present"/"fell back" (and "unknown", when
+     any) explain ghorg's per-repo "Could not checkout <branch>" lines as
+     expected fall-backs, not failures — same facts as the --report-json
+     branchStatus below.
+
      Pass --branch <name> to check out a specific branch in every clone instead
      of each repo's default. It is ONE name applied to all repos: ghorg leaves a
      repo on its default branch where that branch is absent (best-effort "prefer
