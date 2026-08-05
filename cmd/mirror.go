@@ -129,6 +129,9 @@ func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws,
 		return err
 	}
 	done(errOut, fmt.Sprintf("mirror complete → %s/%s", ws, sel.Owner))
+	// goldfinger's own reconciliation line — the honest counterpart to ghorg's
+	// "N new clones" summary and its per-repo "Could not checkout" fall-back noise.
+	reportReconciliation(errOut, sel, ws, opts)
 	return emitMirrorReport(sel, ws, opts, report, out, errOut)
 }
 

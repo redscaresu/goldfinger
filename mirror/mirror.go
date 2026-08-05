@@ -37,6 +37,22 @@ var ambientGhorgEnv = []string{
 	"GHORG_PRUNE_UNTOUCHED_NO_CONFIRM",
 }
 
+// layoutGhorgEnv lists GHORG_* environment variables that change WHERE clones
+// land on disk. goldfinger promises a fixed <workspace>/<owner>/<repo> layout —
+// it prints that path on stdout, builds the mirror report against it, and
+// reconciles the on-disk count against it — so the host must not be able to
+// relocate the clones out from under that promise. These are scrubbed from
+// ghorg's environment, and the GitHub-relevant knobs are additionally pinned in
+// argv (--output-dir, --preserve-scm-hostname=false) so a ghorg config file
+// (which a CLI flag still overrides, but an env scrub does not reach) can't move
+// them either. GHORG_PRESERVE_DIRECTORY_STRUCTURE is GitLab-only, so scrubbing
+// its env is enough (goldfinger only clones GitHub).
+var layoutGhorgEnv = []string{
+	"GHORG_OUTPUT_DIR",
+	"GHORG_PRESERVE_SCM_HOSTNAME",
+	"GHORG_PRESERVE_DIRECTORY_STRUCTURE",
+}
+
 // Runner executes an external command. It is the seam that lets Mirror build and
 // dispatch a ghorg invocation without ghorg installed during tests.
 type Runner func(ctx context.Context, name string, args, env []string) error
@@ -74,10 +90,13 @@ func Mirror(ctx context.Context, run Runner, s models.Selection, token string, o
 	defer ignoreCleanup()
 
 	args := buildArgs(s, namesFile, ignoreFile, opts)
-	// Map the PAT onto ghorg's own token var, and strip both the source var and
-	// any ambient set-narrowing/pruning GHORG_* vars, so the raw PAT never
-	// reaches ghorg and the host can't change the set out from under the lockfile.
-	env := overrideEnv(os.Environ(), tokenEnv, token, append([]string{models.TokenEnvVar}, ambientGhorgEnv...)...)
+	// Map the PAT onto ghorg's own token var, and strip the source var, any
+	// ambient set-narrowing/pruning GHORG_* vars, and any layout-changing GHORG_*
+	// vars, so the raw PAT never reaches ghorg and the host can change neither the
+	// set nor the layout out from under the lockfile.
+	drop := append([]string{models.TokenEnvVar}, ambientGhorgEnv...)
+	drop = append(drop, layoutGhorgEnv...)
+	env := overrideEnv(os.Environ(), tokenEnv, token, drop...)
 	if err := run(ctx, "ghorg", args, env); err != nil {
 		return fmt.Errorf("ghorg clone %s: %w", s.Owner, err)
 	}
@@ -91,6 +110,15 @@ func buildArgs(s models.Selection, namesFile, ignoreFile string, opts Options) [
 		"--clone-type=" + cloneType(s.OwnerType),
 		"--target-repos-path=" + namesFile,
 		"--ghorgignore-path=" + ignoreFile,
+		// Pin the on-disk layout to <workspace>/<owner>/<repo> (see layoutGhorgEnv).
+		// --output-dir=<owner> is ghorg's own default but stated explicitly so it
+		// is deterministic, and --preserve-scm-hostname=false stops ghorg nesting
+		// clones under a <hostname>/ subdir. A ghorg CLI flag overrides both the
+		// matching env var and a ghorg config file, so together with the env scrub
+		// the host cannot move the clones out from under the path goldfinger prints,
+		// the mirror report, and the post-mirror reconciliation count.
+		"--output-dir=" + s.Owner,
+		"--preserve-scm-hostname=false",
 	}
 	if opts.Workspace != "" {
 		args = append(args, "--path="+opts.Workspace)

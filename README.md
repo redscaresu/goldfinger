@@ -201,6 +201,22 @@ The resolved workspace path is printed as a bare absolute path to **stdout**
 for the millisecond-stamped dir. Because the path prints before ghorg runs, check
 the exit code (not stdout) to confirm the clone succeeded.
 
+When ghorg finishes, goldfinger prints its own **reconciliation line** to stderr:
+
+```
+✓ reconciliation: in selection: 59 | on disk: 59 | branch present: 15 | fell back: 44
+```
+
+Read this instead of ghorg's `N new clones`, which counts only *newly* cloned
+repos — a re-mirror of an unchanged fleet reports `0 new clones` even though all
+59 are present. `in selection` is the lockfile count; `on disk` is a read-only
+count (a directory stat per repo, no `git`) of how many actually landed under
+`<workspace>/<owner>`. If `on disk` is short, goldfinger warns (⚠) that the
+mirror under-covered the selection so you can re-run rather than trust a green
+finish. With `--branch`, `branch present` / `fell back` (and `unknown`, when any)
+recast ghorg's per-repo `Could not checkout <branch>` noise as the expected
+fall-backs they are — the same facts as `--report-json`'s `branchStatus` below.
+
 To know *which* repos actually had the branch (rather than silently falling
 back), record it at `select` time with `--branch-presence <name>` and ask
 `mirror` for a report:

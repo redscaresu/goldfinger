@@ -140,6 +140,29 @@ func TestMirrorStripsSourcePATFromChildEnv(t *testing.T) {
 	assert.Contains(t, cap.env, tokenEnv+"=mapped-token")
 }
 
+func TestMirrorPinsLayoutAgainstHostConfig(t *testing.T) {
+	// The layout <workspace>/<owner>/<repo> is what goldfinger prints, reports, and
+	// reconciles against, so every ghorg knob that could move clones must be both
+	// pinned in argv (a CLI flag overrides env AND config) and scrubbed from the
+	// child env. Setting all of them here must not change the resulting layout.
+	t.Setenv("GHORG_OUTPUT_DIR", "host-output")
+	t.Setenv("GHORG_PRESERVE_SCM_HOSTNAME", "true")
+	t.Setenv("GHORG_PRESERVE_DIRECTORY_STRUCTURE", "true")
+
+	var cap capture
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{}))
+
+	assert.Contains(t, cap.args, "--output-dir=redscaresu",
+		"output dir must be pinned to the owner so GHORG_OUTPUT_DIR can't relocate clones")
+	assert.Contains(t, cap.args, "--preserve-scm-hostname=false",
+		"scm-hostname nesting must be pinned off so clones stay directly under <ws>/<owner>")
+	for _, e := range cap.env {
+		for _, banned := range layoutGhorgEnv {
+			assert.NotContains(t, e, banned+"=", "layout-changing ghorg var %s must be stripped", banned)
+		}
+	}
+}
+
 func TestMirrorOrgCloneType(t *testing.T) {
 	s := userSelection()
 	s.OwnerType = models.OwnerOrganization
