@@ -9,6 +9,13 @@ tools against that exact set:
 goldfinger never writes to GitHub itself. Discovery is read-only; mirroring is
 ghorg; commits/pushes/PRs are multi-gitter.
 
+INSTALL
+  brew install redscaresu/tap/goldfinger
+  Homebrew pulls ghorg and multi-gitter in automatically (formula deps) and puts
+  all three on PATH — so the "install ghorg and multi-gitter" prerequisite below
+  is already satisfied. Non-brew: download a binary from the GitHub Releases page
+  and install ghorg + multi-gitter yourself. Verify with `goldfinger --version`.
+
 PREREQUISITES
   - Auth: if you're logged in with the GitHub CLI (gh auth login), goldfinger
     uses that session automatically — nothing to set. Otherwise (e.g. CI) set
@@ -16,7 +23,8 @@ PREREQUISITES
     Either way goldfinger maps the one token to the env vars ghorg
     (GHORG_GITHUB_TOKEN) and multi-gitter (GITHUB_TOKEN) expect — one token, not
     three.
-  - Install ghorg and multi-gitter and put them on PATH.
+  - ghorg and multi-gitter on PATH (the brew install above pulls both in;
+    install them yourself only for non-brew setups).
   - Configure a git identity (git config user.name / user.email). multi-gitter
     authors the apply commit from it; without it, apply silently makes no change
     and opens no PR.
