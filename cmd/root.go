@@ -24,6 +24,6 @@ func newRootCmd() *cobra.Command {
 		// can exit non-zero for drift without Cobra printing an "Error:" line.
 		SilenceErrors: true,
 	}
-	root.AddCommand(newSelectCmd(), newMirrorCmd(), newApplyCmd(), newCheckCmd(), newSelectionsCmd(), newDoctorCmd(), newGuideCmd())
+	root.AddCommand(newSelectCmd(), newMirrorCmd(), newApplyCmd(), newCheckCmd(), newSelectionsCmd(), newDoctorCmd(), newGuideCmd(), newSchemaCmd())
 	return root
 }

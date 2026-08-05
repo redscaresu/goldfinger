@@ -105,8 +105,10 @@ goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go
 guide --json` instead emits a versioned, machine-consumable catalogue of the CLI
 surface (every command, its flags, which flags are required, a flag's enum
 values, and a canonical example per command) on stdout — so an agent can discover
-what goldfinger can do by parsing structure rather than prose. See
-[machine-readable output](#machine-readable-output---json).
+what goldfinger can do by parsing structure rather than prose. Its output-side
+companion is `goldfinger schema`, which prints the JSON Schema for the lockfile
+and every machine-readable payload, so a consumer can validate what goldfinger
+emits. See [machine-readable output](#machine-readable-output---json).
 
 ### `goldfinger select`
 
@@ -483,11 +485,14 @@ to stderr — so an agent can parse stdout without stripping prose.
 | `mirror` | `--report-json` | `{version, workspace, owner, repoCount, branch?, repos:[…]}` (see [`mirror`](#goldfinger-mirror)). |
 | `apply` | `--plan-json` | `{version, dry_run, sign_mode, branch, pr_title, commit_message, pr_body_present, labels, reviewers, draft, batch_size, batch_pause, command_program, command_redacted, base_branch_source, repos:[{repo, base_branch_recorded}], repos_total}` — the invocation goldfinger will make, **not** the diff. See [`apply`](#goldfinger-apply). |
 | `guide` | `--json` | `{version, commands:[{name, summary, requiredFlags, flags:[{name, usage, required, values?, default?}], example, notes?}]}` — a machine-consumable catalogue of the CLI surface, so an agent can discover every command, its flags, which are required, a flag's enum values, and a canonical example without parsing the prose playbook. Command names, flag names, and usage text are derived from the live command tree; requiredness, enum values, notes, and the example are curated and kept in sync with the validators by tests. |
+| `schema` | *(always JSON)* | `{version, schemas:{lockfile, select, check, selections, doctor, apply-plan, mirror-report, capabilities}}` — the [JSON Schema](https://json-schema.org/) (draft 2020-12) for the lockfile and every *other* payload in this table, so a consumer can **validate** goldfinger's output rather than infer its shape. Read-only and offline: no token, no network, no git. The schemas are hand-authored but pinned to the Go types by a golden test and a reflection test, so they cannot silently drift. Where `guide --json` describes the *input* surface, `schema` describes the *output* surface. |
 
 Each payload carries an explicit top-level `version` so consumers can branch on
 shape across releases — the sole exception is `select --json`, whose version is
 the nested `selection.version` (the lockfile version), so the nested object stays
-structurally identical to the on-disk lockfile.
+structurally identical to the on-disk lockfile. `goldfinger schema` prints the
+JSON Schema for every payload here (and the lockfile), so the shapes above are
+machine-checkable, not just documented.
 
 ### Exit codes
 

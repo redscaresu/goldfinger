@@ -134,6 +134,10 @@ var curatedCapabilities = map[string]curatedCommand{
 	"guide": {
 		example: "goldfinger guide --json",
 	},
+	"schema": {
+		example: "goldfinger schema",
+		notes:   []string{"prints JSON Schema for the lockfile and every machine-readable payload; read-only and offline, needs no token, opens no network, runs no git"},
+	},
 }
 
 // buildCapabilities walks the root command tree and merges each command's

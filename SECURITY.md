@@ -34,3 +34,11 @@ goldfinger streams the child tools' output straight through; it does not add a
 redaction layer of its own, so it relies on ghorg and multi-gitter not printing
 the token. If you find a path where a token can leak into logs, argv, output, or
 committed files, treat it as a security issue and report it privately as above.
+
+Some commands are entirely offline and touch no credential at all: `goldfinger
+guide` (the operator playbook / CLI catalogue) and `goldfinger schema` (JSON
+Schema for the lockfile and every machine-readable payload) resolve no token,
+open no network connection, and run no child tool — they emit only static,
+self-describing metadata. `goldfinger schema`'s output is derived solely from
+goldfinger's own type definitions and never includes any selection data, token,
+or environment value.

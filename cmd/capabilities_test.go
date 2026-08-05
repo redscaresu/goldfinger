@@ -108,7 +108,7 @@ func TestCapabilitiesListsExactlyTheRegisteredCommands(t *testing.T) {
 	// wrongly drops a real command, the ElementsMatch above would still pass (both
 	// sides share the filter), but this fixed set would catch the omission.
 	assert.ElementsMatch(t,
-		[]string{"select", "mirror", "apply", "check", "selections", "doctor", "guide"},
+		[]string{"select", "mirror", "apply", "check", "selections", "doctor", "guide", "schema"},
 		catalogued,
 		"the catalogue must list exactly goldfinger's own commands")
 }

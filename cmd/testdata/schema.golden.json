@@ -1,0 +1,678 @@
+{
+  "version": 1,
+  "schemas": {
+    "apply-plan": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The invocation plan apply --plan-json emits — what goldfinger is about to run, not the resulting diff.",
+      "properties": {
+        "base_branch_source": {
+          "type": "string"
+        },
+        "batch_pause": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "batch_size": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": "string"
+        },
+        "command_program": {
+          "type": "string"
+        },
+        "command_redacted": {
+          "type": "boolean"
+        },
+        "commit_message": {
+          "type": "string"
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pr_body_present": {
+          "type": "boolean"
+        },
+        "pr_title": {
+          "type": "string"
+        },
+        "repos": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "base_branch_recorded": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo",
+              "base_branch_recorded"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "repos_total": {
+          "type": "integer"
+        },
+        "reviewers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sign_mode": {
+          "enum": [
+            "local",
+            "github",
+            "none"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "dry_run",
+        "sign_mode",
+        "branch",
+        "pr_title",
+        "commit_message",
+        "pr_body_present",
+        "labels",
+        "reviewers",
+        "draft",
+        "batch_size",
+        "batch_pause",
+        "command_program",
+        "command_redacted",
+        "base_branch_source",
+        "repos",
+        "repos_total"
+      ],
+      "title": "apply --plan-json",
+      "type": "object"
+    },
+    "capabilities": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The CLI-surface catalogue guide --json emits.",
+      "properties": {
+        "commands": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "example": {
+                "type": "string"
+              },
+              "flags": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    },
+                    "usage": {
+                      "type": "string"
+                    },
+                    "values": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "usage",
+                    "required"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "name": {
+                "type": "string"
+              },
+              "notes": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "requiredFlags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "summary",
+              "requiredFlags",
+              "flags"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "commands"
+      ],
+      "title": "guide --json",
+      "type": "object"
+    },
+    "check": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The drift report check --json emits against live discovery.",
+      "properties": {
+        "added": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "defaultBranchMoved": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo",
+              "from",
+              "to"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "inSync": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ownerTypeFlipped": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "removed": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "inSync",
+        "added",
+        "removed",
+        "defaultBranchMoved",
+        "ownerTypeFlipped"
+      ],
+      "title": "check --json",
+      "type": "object"
+    },
+    "doctor": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The preflight-check report doctor --json emits.",
+      "properties": {
+        "checks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "check": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "fix": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "ok",
+                  "info",
+                  "warn",
+                  "fail"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "check",
+              "status",
+              "detail"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "checks"
+      ],
+      "title": "doctor --json",
+      "type": "object"
+    },
+    "lockfile": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The frozen selection persisted to goldfinger.selection and consumed by mirror and apply.",
+      "properties": {
+        "branchesChecked": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filter": {
+          "additionalProperties": false,
+          "properties": {
+            "allRepos": {
+              "type": "boolean"
+            },
+            "topics": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "allRepos"
+          ],
+          "type": "object"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "ownerType": {
+          "enum": [
+            "User",
+            "Organization"
+          ],
+          "type": "string"
+        },
+        "repos": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "branchPresence": {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              "cloneURL": {
+                "type": "string"
+              },
+              "defaultBranch": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "topics": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "owner",
+              "name",
+              "cloneURL",
+              "defaultBranch"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "resolvedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "owner",
+        "ownerType",
+        "filter",
+        "resolvedAt",
+        "tool",
+        "repos"
+      ],
+      "title": "Selection lockfile",
+      "type": "object"
+    },
+    "mirror-report": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The mirror summary mirror --report-json emits, built from the lockfile alone.",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "branchFactsNote": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "repoCount": {
+          "type": "integer"
+        },
+        "repos": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "branchStatus": {
+                "enum": [
+                  "has-branch",
+                  "falls-back-to-default",
+                  "unknown",
+                  "default-branch"
+                ],
+                "type": "string"
+              },
+              "defaultBranch": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo",
+              "defaultBranch",
+              "branchStatus"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "workspace",
+        "owner",
+        "repoCount",
+        "repos"
+      ],
+      "title": "mirror --report-json",
+      "type": "object"
+    },
+    "select": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The wrapper select --json emits: the on-disk path plus the full lockfile.",
+      "properties": {
+        "selection": {
+          "additionalProperties": false,
+          "properties": {
+            "branchesChecked": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "filter": {
+              "additionalProperties": false,
+              "properties": {
+                "allRepos": {
+                  "type": "boolean"
+                },
+                "topics": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "allRepos"
+              ],
+              "type": "object"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "ownerType": {
+              "enum": [
+                "User",
+                "Organization"
+              ],
+              "type": "string"
+            },
+            "repos": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "archived": {
+                    "type": "boolean"
+                  },
+                  "branchPresence": {
+                    "additionalProperties": {
+                      "type": "boolean"
+                    },
+                    "type": "object"
+                  },
+                  "cloneURL": {
+                    "type": "string"
+                  },
+                  "defaultBranch": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "owner": {
+                    "type": "string"
+                  },
+                  "topics": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "owner",
+                  "name",
+                  "cloneURL",
+                  "defaultBranch"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "resolvedAt": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "version": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version",
+            "owner",
+            "ownerType",
+            "filter",
+            "resolvedAt",
+            "tool",
+            "repos"
+          ],
+          "type": "object"
+        },
+        "selectionPath": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "selectionPath",
+        "selection"
+      ],
+      "title": "select --json",
+      "type": "object"
+    },
+    "selections": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The versioned registry listing selections --json emits.",
+      "properties": {
+        "selections": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "repoCount": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "resolvedAt": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "path",
+              "repoCount"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "selections"
+      ],
+      "title": "selections --json",
+      "type": "object"
+    }
+  }
+}

@@ -227,11 +227,18 @@ MACHINE-READABLE OUTPUT
        goldfinger mirror --report-json -> {version, workspace, owner, repos, …}
        goldfinger apply --plan-json ... -> {version, dry_run, sign_mode, repos, …}
        goldfinger guide --json        -> {version, commands:[{name, flags, …}]}
+       goldfinger schema              -> {version, schemas:{lockfile, check, …}}
   guide --json is the self-describing CLI catalogue: every command, its flags,
   which flags are required, a flag's enum values (e.g. --sign), and a canonical
   example per command — discover what goldfinger can do by parsing structure
   instead of this prose. Names/usage come from the live command tree; requiredness
   and enums are kept in sync with the validators by tests.
+  schema is the output-side companion: it prints the JSON Schema (draft 2020-12)
+  for the lockfile and every payload above, so you can VALIDATE what goldfinger
+  emits — or hand a validator the exact shape — instead of inferring it. It is
+  read-only and offline (no token, no network, no git), and its schemas are pinned
+  to the Go types by a golden test, so they cannot drift. Where guide --json
+  describes the INPUT surface, schema describes the OUTPUT surface.
   apply --plan-json emits the INVOCATION plan (not the diff; command redacted to
   argv[0], body as a presence bool) on stdout and STILL runs multi-gitter's
   dry-run — you get both the plan and the real diff (on stderr).
@@ -246,6 +253,8 @@ NOTES FOR AI AGENTS
     — a machine-readable go/no-go before you select or apply.
   - Every read command takes --json (doctor/select/check/selections) or --report-json
     (mirror): prefer it over scraping prose. stdout is the data, stderr the noise.
+  - `goldfinger schema` prints the JSON Schema for every one of those payloads —
+    validate goldfinger's output against it rather than guessing field shapes.
   - Before authoring an apply, MIRROR first and READ the real code (Dockerfiles,
     imports, CI configs, etc.). A fleet change script written blind will be wrong
     on the edge cases — the variety across repos is exactly why you inspect a
