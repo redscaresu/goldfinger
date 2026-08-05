@@ -1,0 +1,33 @@
+name: zizmor
+
+# Supply-chain / CI-security gate for our own GitHub Actions workflows. zizmor
+# statically audits everything under .github/workflows for unpinned actions,
+# over-broad token permissions, credential persistence, template injection and
+# cache poisoning. Blocking: a new finding fails the check so it can't merge.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+# Read-only: the audit only needs to read the workflow files it scans.
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor
+        # pipx is preinstalled on GitHub's ubuntu runners, so `pipx run` fetches
+        # the pinned zizmor release ephemerally — no committed toolchain, no extra
+        # setup action to pin. GH_TOKEN lets zizmor resolve action tags for its
+        # unpinned-uses audit.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: pipx run --spec zizmor==1.29.0 zizmor .github/workflows/
