@@ -17,6 +17,7 @@ func newCheckCmd() *cobra.Command {
 	var (
 		selectionPath string
 		name          string
+		asJSON        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "check",
@@ -46,11 +47,49 @@ func newCheckCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runCheck(cmd.Context(), c, sel, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runCheck(cmd.Context(), c, sel, checkOpts{name: name, asJSON: asJSON}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	addSelectionFlags(cmd, &name, &selectionPath)
+	cmd.Flags().BoolVar(&asJSON, "json", false,
+		"emit the drift report as JSON on stdout instead of the human table; exit code is unchanged (0 in sync, 1 drift, 2 error); banners stay on stderr")
 	return cmd
+}
+
+// checkOpts groups the non-resolver inputs to runCheck. name is echoed into the
+// JSON report only for a named selection (empty for a default/--selection run).
+type checkOpts struct {
+	name   string
+	asJSON bool
+}
+
+// checkReport is the --json shape for check (issue #27 §2/§4). ownerTypeFlipped is
+// a nullable object (a selection has exactly one owner), null when unchanged —
+// not an array. name is omitted for a default/--selection run.
+type checkReport struct {
+	Version            int                `json:"version"`
+	Name               string             `json:"name,omitempty"`
+	InSync             bool               `json:"inSync"`
+	Added              []string           `json:"added"`
+	Removed            []removedJSON      `json:"removed"`
+	DefaultBranchMoved []branchMovedJSON  `json:"defaultBranchMoved"`
+	OwnerTypeFlipped   *ownerTypeFlipJSON `json:"ownerTypeFlipped"`
+}
+
+type removedJSON struct {
+	Repo   string `json:"repo"`
+	Reason string `json:"reason"`
+}
+
+type branchMovedJSON struct {
+	Repo string `json:"repo"`
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type ownerTypeFlipJSON struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // runCheck resolves live discovery for the selection's owner, applies the
@@ -58,11 +97,13 @@ func newCheckCmd() *cobra.Command {
 // the testable core of the check command. It returns an exitError with code 1
 // when drift is found so the process exits non-zero (for CI) without printing an
 // error — the drift report itself has already gone to stdout.
-func runCheck(ctx context.Context, r repoResolver, sel models.Selection, out, errOut io.Writer) error {
+func runCheck(ctx context.Context, r repoResolver, sel models.Selection, o checkOpts, out, errOut io.Writer) error {
 	banner(errOut, "Checking selection for "+sel.Owner+" against live discovery")
-	if _, err := r.Verify(ctx); err != nil {
+	login, err := r.Verify(ctx)
+	if err != nil {
 		return fmt.Errorf("verifying token: %w", err)
 	}
+	announcePrincipal(errOut, login)
 	raw, liveOwnerType, err := r.ListRepos(ctx, sel.Owner)
 	if err != nil {
 		return err
@@ -74,13 +115,53 @@ func runCheck(ctx context.Context, r repoResolver, sel models.Selection, out, er
 	// function stays a pure repos-only diff. It matters because mirror passes the
 	// owner type to ghorg as --clone-type; a user<->org flip breaks mirroring.
 	ownerTypeMoved := sel.OwnerType != "" && liveOwnerType != "" && sel.OwnerType != liveOwnerType
+	inSync := diff.Empty() && !ownerTypeMoved
 
-	if diff.Empty() && !ownerTypeMoved {
+	if o.asJSON {
+		// Machine mode: the full report goes to stdout regardless of sync state, so
+		// an agent gets one parseable object either way. The exit code (below) still
+		// carries the domain signal, exactly as in human mode.
+		if err := emitJSON(out, buildCheckReport(o.name, diff, ownerTypeMoved, sel.OwnerType, liveOwnerType, inSync)); err != nil {
+			return err
+		}
+		if inSync {
+			return nil
+		}
+		return exitError{code: 1}
+	}
+
+	if inSync {
 		done(errOut, fmt.Sprintf("selection is in sync with live discovery (%d repo(s))", len(sel.Repos)))
 		return nil
 	}
 	renderDrift(out, sel, diff, ownerTypeMoved, liveOwnerType)
 	return exitError{code: 1}
+}
+
+// buildCheckReport shapes the drift diff into the versioned --json payload. It is
+// pure so the exact shape is trivially testable.
+func buildCheckReport(name string, diff discovery.Diff, ownerTypeMoved bool, wasOwnerType, liveOwnerType string, inSync bool) checkReport {
+	rep := checkReport{
+		Version:            checkReportVersion,
+		Name:               name,
+		InSync:             inSync,
+		Added:              make([]string, 0, len(diff.Added)),
+		Removed:            make([]removedJSON, 0, len(diff.Removed)),
+		DefaultBranchMoved: make([]branchMovedJSON, 0, len(diff.DefaultBranchMoved)),
+	}
+	for _, a := range diff.Added {
+		rep.Added = append(rep.Added, a.FullName())
+	}
+	for _, rm := range diff.Removed {
+		rep.Removed = append(rep.Removed, removedJSON{Repo: rm.Repo.FullName(), Reason: rm.Reason})
+	}
+	for _, bc := range diff.DefaultBranchMoved {
+		rep.DefaultBranchMoved = append(rep.DefaultBranchMoved, branchMovedJSON{Repo: bc.Repo.FullName(), From: bc.Was, To: bc.Now})
+	}
+	if ownerTypeMoved {
+		rep.OwnerTypeFlipped = &ownerTypeFlipJSON{From: wasOwnerType, To: liveOwnerType}
+	}
+	return rep
 }
 
 // renderDrift writes the human-readable drift report to out. Data goes to stdout

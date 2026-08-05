@@ -44,17 +44,10 @@ func newMirrorCmd() *cobra.Command {
 		Use:   "mirror",
 		Short: "Clone the selection into a local workspace via ghorg",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Pure local flag check first, before any token/tool/selection work,
-			// so an impossible flag combo fails fast without needing a token.
+			// Pure/local validation first — flag combos, selection path, workspace —
+			// so a bad invocation fails without resolving a token (which can shell out
+			// to `gh`) or hitting the network.
 			if err := validateMirror(mirrorValidation{branch: branch, cloneDepth: cloneDepth}); err != nil {
-				return err
-			}
-			token, source, err := resolveToken(cmd.Context())
-			if err != nil {
-				return err
-			}
-			announceTokenSource(cmd.ErrOrStderr(), source)
-			if err := requireTool("ghorg", "https://github.com/gabrie30/ghorg#installation"); err != nil {
 				return err
 			}
 			path, err := resolveSelectionPath(name, selectionPath)
@@ -67,6 +60,20 @@ func newMirrorCmd() *cobra.Command {
 			}
 			ws, err := resolveWorkspace(workspace, purpose, branch)
 			if err != nil {
+				return err
+			}
+			// Now resolve auth and the child tool, then verify identity before the
+			// (potentially long) ghorg clone — honours the documented per-run principal
+			// print and fails fast on a bad token without re-running discovery.
+			token, source, err := resolveToken(cmd.Context())
+			if err != nil {
+				return err
+			}
+			announceTokenSource(cmd.ErrOrStderr(), source)
+			if err := requireTool("ghorg", "https://github.com/gabrie30/ghorg#installation"); err != nil {
+				return err
+			}
+			if err := verifyAndAnnouncePrincipal(cmd.Context(), cmd.ErrOrStderr(), token); err != nil {
 				return err
 			}
 			return runMirror(cmd.Context(), execRun, sel, ws, token, mirror.Options{
@@ -106,6 +113,14 @@ func newMirrorCmd() *cobra.Command {
 // report, by contrast, is emitted only after a successful mirror.
 func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws, token string, opts mirror.Options, report reportOptions, out, errOut io.Writer) error {
 	opts.Workspace = ws
+	// Reject an empty selection *before* printing anything to stdout. mirror.Mirror
+	// also rejects it, but only after runMirror would already have emitted the bare
+	// workspace path — misleading machine output for a run that never happens. An
+	// empty lockfile usually means a misconfigured select (see §6), so fail loud
+	// and clean here.
+	if len(sel.Repos) == 0 {
+		return errors.New("selection is empty — nothing to mirror; re-run `select` (a 0-repo select is an error unless --allow-empty)")
+	}
 	if !report.toStdout {
 		fmt.Fprintln(out, ws)
 	}

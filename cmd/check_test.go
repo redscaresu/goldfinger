@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -32,10 +33,64 @@ func TestRunCheckInSync(t *testing.T) {
 	r := fakeResolver{ownerType: models.OwnerUser, repos: sel.Repos}
 	var out, errOut bytes.Buffer
 
-	err := runCheck(context.Background(), r, sel, &out, &errOut)
+	err := runCheck(context.Background(), r, sel, checkOpts{}, &out, &errOut)
 	require.NoError(t, err)
 	assert.Empty(t, out.String(), "no drift report on stdout when in sync")
 	assert.Contains(t, errOut.String(), "in sync with live discovery")
+}
+
+func TestRunCheckJSON(t *testing.T) {
+	t.Run("in sync emits report and exits 0", func(t *testing.T) {
+		sel := lockfile()
+		r := fakeResolver{ownerType: models.OwnerUser, repos: sel.Repos}
+		var out, errOut bytes.Buffer
+
+		err := runCheck(context.Background(), r, sel, checkOpts{name: "platform", asJSON: true}, &out, &errOut)
+		require.NoError(t, err)
+
+		var rep checkReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+		assert.Equal(t, checkReportVersion, rep.Version)
+		assert.Equal(t, "platform", rep.Name)
+		assert.True(t, rep.InSync)
+		assert.Empty(t, rep.Added)
+		assert.Empty(t, rep.Removed)
+		assert.Nil(t, rep.OwnerTypeFlipped, "nullable object is null when unchanged")
+		// stdout is JSON only.
+		assert.NotContains(t, errOut.String(), "{")
+	})
+
+	t.Run("drift emits report and exits 1", func(t *testing.T) {
+		sel := lockfile()
+		r := fakeResolver{
+			ownerType: models.OwnerOrganization, // owner type also flipped
+			repos: []models.Repo{
+				{Owner: "acme", Name: "a", DefaultBranch: "dev"}, // default branch moved
+				{Owner: "acme", Name: "c", DefaultBranch: "main"},
+			},
+		}
+		var out, errOut bytes.Buffer
+
+		err := runCheck(context.Background(), r, sel, checkOpts{asJSON: true}, &out, &errOut)
+		var ee exitError
+		require.ErrorAs(t, err, &ee)
+		assert.Equal(t, 1, ee.code)
+
+		var rep checkReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+		assert.False(t, rep.InSync)
+		assert.Empty(t, rep.Name, "name omitted for a default selection")
+		assert.Equal(t, []string{"acme/c"}, rep.Added)
+		require.Len(t, rep.Removed, 1)
+		assert.Equal(t, "acme/b", rep.Removed[0].Repo)
+		require.Len(t, rep.DefaultBranchMoved, 1)
+		assert.Equal(t, "acme/a", rep.DefaultBranchMoved[0].Repo)
+		assert.Equal(t, "main", rep.DefaultBranchMoved[0].From)
+		assert.Equal(t, "dev", rep.DefaultBranchMoved[0].To)
+		require.NotNil(t, rep.OwnerTypeFlipped)
+		assert.Equal(t, models.OwnerUser, rep.OwnerTypeFlipped.From)
+		assert.Equal(t, models.OwnerOrganization, rep.OwnerTypeFlipped.To)
+	})
 }
 
 func TestRunCheckReportsRepoDrift(t *testing.T) {
@@ -50,7 +105,7 @@ func TestRunCheckReportsRepoDrift(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 
-	err := runCheck(context.Background(), r, sel, &out, &errOut)
+	err := runCheck(context.Background(), r, sel, checkOpts{}, &out, &errOut)
 
 	var ee exitError
 	require.ErrorAs(t, err, &ee)
@@ -69,7 +124,7 @@ func TestRunCheckReportsOwnerTypeDrift(t *testing.T) {
 	r := fakeResolver{ownerType: models.OwnerOrganization, repos: sel.Repos}
 	var out, errOut bytes.Buffer
 
-	err := runCheck(context.Background(), r, sel, &out, &errOut)
+	err := runCheck(context.Background(), r, sel, checkOpts{}, &out, &errOut)
 
 	var ee exitError
 	require.ErrorAs(t, err, &ee)
@@ -82,7 +137,7 @@ func TestRunCheckPropagatesErrors(t *testing.T) {
 
 	t.Run("verify error", func(t *testing.T) {
 		r := fakeResolver{verifyErr: errors.New("bad token")}
-		err := runCheck(context.Background(), r, sel, &bytes.Buffer{}, &bytes.Buffer{})
+		err := runCheck(context.Background(), r, sel, checkOpts{}, &bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "verifying token")
 		assert.Equal(t, 2, exitCode(err), "a real error exits 2, not 1")
@@ -90,7 +145,7 @@ func TestRunCheckPropagatesErrors(t *testing.T) {
 
 	t.Run("list error", func(t *testing.T) {
 		r := fakeResolver{listErr: errors.New("not found")}
-		err := runCheck(context.Background(), r, sel, &bytes.Buffer{}, &bytes.Buffer{})
+		err := runCheck(context.Background(), r, sel, checkOpts{}, &bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})

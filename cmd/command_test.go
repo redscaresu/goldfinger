@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
+	"github.com/redscaresu/goldfinger/models"
+	"github.com/redscaresu/goldfinger/selection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +26,21 @@ func executeCmd(t *testing.T, token string, args ...string) (string, error) {
 	root.SetArgs(args)
 	err := root.Execute()
 	return buf.String(), err
+}
+
+// writeSelection writes a minimal, valid one-repo lockfile to a temp path and
+// returns it. Guard tests that must clear the local selection read to reach the
+// auth stage (e.g. the missing-token cases) point --selection at it.
+func writeSelection(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), defaultSelectionPath)
+	require.NoError(t, selection.Write(path, models.Selection{
+		Version:   models.SelectionVersion,
+		Owner:     "acme",
+		OwnerType: models.OwnerUser,
+		Repos:     []models.Repo{{Owner: "acme", Name: "a"}},
+	}))
+	return path
 }
 
 func TestHelpRenders(t *testing.T) {

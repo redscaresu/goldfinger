@@ -23,6 +23,14 @@ PREREQUISITES
     Either way goldfinger maps the one token to the env vars ghorg
     (GHORG_GITHUB_TOKEN) and multi-gitter (GITHUB_TOKEN) expect — one token, not
     three.
+    Precedence: GOLD_FINGER_PAT if set, else `gh auth token`. FOOTGUN: the
+    `gh auth token` subprocess itself honours an ambient GH_TOKEN/GITHUB_TOKEN,
+    so a stray one silently changes which identity goldfinger (and ghorg)
+    authenticate as — a wrong-identity run looks like "0 repos", not an auth
+    error. Every run prints its token source + authenticated principal on stderr
+    and warns when a gh token may be shadowed; if the identity is wrong,
+    `unset GITHUB_TOKEN GH_TOKEN` or set GOLD_FINGER_PAT. The token is never
+    printed.
   - ghorg and multi-gitter on PATH (the brew install above pulls both in;
     install them yourself only for non-brew setups).
   - Configure a git identity (git config user.name / user.email). multi-gitter
@@ -127,6 +135,27 @@ SIGNING (--sign, REQUIRED — no default)
                      GitHub-only, slower, unsuited to large files.
   - --sign none   : UNSIGNED (multi-gitter default go-git). Explicit opt-out.
 
+PREFLIGHT (doctor)
+  Before your first run on a machine (or in CI), confirm the environment:
+       goldfinger doctor
+       goldfinger doctor --json
+  It is entirely read-only — never writes GitHub, never runs git, never prints the
+  token — and reports one line per check:
+    - auth         : which token SOURCE and GitHub PRINCIPAL a run would use
+                     (authenticated as <login> via GOLD_FINGER_PAT / gh session).
+    - auth-shadow  : warns if an ambient GITHUB_TOKEN/GH_TOKEN may be shadowing
+                     your gh login (the wrong-identity footgun above).
+    - ghorg /      : each child tool's PATH location + version, or a fail with an
+      multi-gitter   install hint if missing.
+    - git-identity : user.name/user.email resolved from system+global+env config
+                     (NOT via git — parsed directly). A warn if unset, because
+                     apply would then silently make no commit.
+    - signing      : commit.gpgsign / user.signingkey readiness for `--sign local`
+                     (advisory only — github/none don't need local config).
+  Exit status: 0 nothing failed, 1 a check failed (no token, a missing child
+  tool), 2 doctor itself could not run. Warns and info never fail the run, so
+  `goldfinger doctor` is a safe CI gate for "can this box run goldfinger at all".
+
 DRIFT CHECK
   A selection is frozen at select time; the world moves on. Before a big mirror
   or apply, confirm the lockfile still matches reality:
@@ -158,8 +187,46 @@ SAFETY — READ THIS
     model you used (local = your GPG key, github = GitHub's key, none = unsigned)
     when you present the dry-run or a real run.
 
+EXIT CODES
+  goldfinger's exit status is a stable contract you can branch on in scripts:
+    0  success — the command did its job. In-sync `check`, a completed dry-run,
+       a finished mirror, a written selection.
+    1  a domain OUTCOME, not a crash — the command ran fine but is reporting a
+       state you asked about. `check` uses it when drift was found (the drift
+       report is already on stdout; nothing is printed to stderr); `doctor` uses
+       it when a preflight check failed. Treat 1 as "answer = yes/drift/failed
+       check", not "it broke".
+    2  ERROR — bad flags, no token / auth failure, a missing child tool, an
+       unreadable lockfile, or a zero-repo `select` without --allow-empty; also
+       `doctor` itself could not run. The message on stderr names the next action.
+  So: `if goldfinger check; then ...` distinguishes 0 (sync) from 1 (drift) from
+  2 (error), and `goldfinger doctor` likewise separates all-clear (0) from a
+  failed check (1) from a doctor that couldn't run (2) — a wrong token trips 2,
+  never a false "in sync".
+
+MACHINE-READABLE OUTPUT
+  Every read command emits JSON on request, one contract: stdout = machine data,
+  stderr = human banners/logs. In --json mode stdout is ONLY the JSON.
+       goldfinger select --json ...   -> {selectionPath, selection:{…lockfile…}}
+       goldfinger doctor --json       -> {version, checks:[{check, status, detail, fix}]}
+       goldfinger check --json        -> {version, inSync, added, removed, …}
+       goldfinger selections --json   -> {version, selections:[{name, owner, …}]}
+       goldfinger mirror --report-json -> {version, workspace, owner, repos, …}
+       goldfinger apply --plan-json ... -> {version, dry_run, sign_mode, repos, …}
+  apply --plan-json emits the INVOCATION plan (not the diff; command redacted to
+  argv[0], body as a presence bool) on stdout and STILL runs multi-gitter's
+  dry-run — you get both the plan and the real diff (on stderr).
+  Each payload carries a top-level `version` for shape-stability, except
+  `select --json` whose version is the nested selection.version (the lockfile
+  version), so the nested object stays identical to goldfinger.selection on disk.
+
 NOTES FOR AI AGENTS
   - The selection lockfile is JSON — read it directly for structured state.
+  - Run `goldfinger doctor --json` first on an unfamiliar box: it tells you the
+    principal, whether the child tools are present, and whether apply will commit
+    — a machine-readable go/no-go before you select or apply.
+  - Every read command takes --json (doctor/select/check/selections) or --report-json
+    (mirror): prefer it over scraping prose. stdout is the data, stderr the noise.
   - Before authoring an apply, MIRROR first and READ the real code (Dockerfiles,
     imports, CI configs, etc.). A fleet change script written blind will be wrong
     on the edge cases — the variety across repos is exactly why you inspect a

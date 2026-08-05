@@ -124,6 +124,18 @@ goldfinger select --org mycompany --all-repos
   dev`. A name equal to a repo's own default branch is present by definition
   (no API call); duplicates are deduped. These facts are **recorded at selection
   time and can drift** — re-`select` to refresh them.
+- `--allow-empty` — by default a filter that matches **zero repos** is an error
+  (exit `2`) and no lockfile is written, because a zero-repo result almost always
+  means a wrong token identity, a wrong owner, or a topic that matches nothing —
+  not an intended empty fleet. The error names the authenticated identity and the
+  inputs so you can tell those apart. Pass `--allow-empty` for the rare case where
+  an empty selection is genuinely what you want.
+- **Auth transparency:** every run prints, on **stderr**, which credential it used
+  (`auth: using …`) and the GitHub login it resolved to (`auth: authenticated as
+  …`) — so a wrong-token result is diagnosable at a glance. If the token came from
+  your `gh` session and a stray `GITHUB_TOKEN`/`GH_TOKEN` is set in the
+  environment, it also warns that `gh` may be using that ambient token instead of
+  your stored login. The token value itself is never printed.
 - Writes `goldfinger.selection` and prints the set for review. The lockfile is
   plain JSON — inspect or diff it before mirroring/applying:
 
@@ -325,6 +337,21 @@ rather than trusting the mirror snapshot. (`check` catches *selection* drift, no
   against an accidental fleet-wide PR blast. A real run should always follow a
   reviewed dry-run; when an agent runs it under explicit human authorization,
   prefer `--draft`.
+- **`--plan-json` (machine-readable plan).** Emits, on stdout, a structured
+  summary of **what goldfinger is about to invoke** — branch, PR title, sign mode,
+  the base-branch source, and one entry per repo — so an agent can present the plan
+  crisply. It is **invocation metadata, not the diff**: goldfinger delegates the
+  clone/script/diff to multi-gitter and only receives an exit status, so the plan
+  never fabricates per-repo `changed` flags or a diffstat. Two safety points: the
+  script after `--` is emitted only as `command_program` (argv[0]) with
+  `command_redacted: true` (your script is arbitrary and may carry secrets), and
+  the PR body is reduced to `pr_body_present` (a boolean). `--plan-json`
+  **supplements** the dry-run — it does not replace it: goldfinger still runs
+  multi-gitter's `--dry-run` so you get both the plan (stdout) and the real diff
+  (stderr). `base_branch_recorded` is the value **recorded at selection time**;
+  with no `--base-branch`, multi-gitter targets each repo's *live* default at run
+  time, which can drift (same caveat the dry-run banner prints) — the guarantee
+  between phases is set-identity, not commit-SHA-identity.
 - **Config isolation:** goldfinger invokes multi-gitter with an empty `--config`
   so an ambient `multi-gitter` config file can't inject its own repo/org
   selection or filters — the lockfile's `--repo` set is the only source of truth
@@ -345,6 +372,41 @@ rather than trusting the mirror snapshot. (`check` catches *selection* drift, no
     default `conflict-strategy: skip` means repos that already have a branch/PR
     are skipped, so a re-run only attempts the remainder — apply is naturally
     resumable, which is how you spread a big fleet across hours.
+
+### `goldfinger doctor`
+
+A read-only preflight for "can this machine actually run goldfinger?" — run it
+once on a new box or in CI before the first real command:
+
+```sh
+goldfinger doctor
+goldfinger doctor --json
+```
+
+It prints one line per check and **never** writes to GitHub, runs `git`, or
+prints the token:
+
+- **auth** — which token *source* and GitHub *principal* a run would use
+  (`authenticated as <login> via GOLD_FINGER_PAT` / `via local gh session`). A
+  fail if no token resolves or it doesn't verify.
+- **auth-shadow** — warns if an ambient `GITHUB_TOKEN`/`GH_TOKEN` may be
+  shadowing your `gh` login (the wrong-identity footgun — see
+  [Requirements](#requirements)).
+- **ghorg** / **multi-gitter** — each child tool's PATH location and version, or
+  a fail with an install hint if it's missing.
+- **git-identity** — `user.name`/`user.email` resolved by *parsing* the
+  system + global + env git config directly (goldfinger never shells out to
+  `git`). A warn if unset, because `apply` would then silently make no commit and
+  open no PR. If an `include`/`includeIf` makes the config unresolvable and no
+  identity was found in the parts read, it degrades to a warn rather than a false
+  pass.
+- **signing** — `commit.gpgsign` / `user.signingkey` readiness for
+  `--sign local`. Advisory only (never a fail): `--sign github`/`--sign none`
+  don't depend on local git config.
+
+Exit status: `0` nothing failed, `1` a check failed (no token, a missing child
+tool), `2` doctor itself could not run. Warns and info never fail the run, so
+`doctor` is a safe CI gate.
 
 ### `goldfinger check`
 
@@ -383,6 +445,46 @@ goldfinger apply  --name payments -- sed -i '…' Dockerfile
 
 `--name` and `--selection <path>` are mutually exclusive; re-running
 `select --name X` refreshes that cohort in place.
+
+### Machine-readable output (`--json`)
+
+Every read command emits structured JSON on request, following one contract:
+**stdout is machine data, stderr is human banners/logs.** In `--json` mode the
+JSON is the *only* thing on stdout — banners, progress, and the auth lines all go
+to stderr — so an agent can parse stdout without stripping prose.
+
+| Command | Flag | Payload |
+| ------- | ---- | ------- |
+| `select` | `--json` | `{selectionPath, selection}` — `selection` is the full lockfile object exactly as persisted (its own `version` field is the payload version). |
+| `doctor` | `--json` | `{version, checks:[{check, status, detail, fix?}]}` where `status` is `ok`/`info`/`warn`/`fail`. The token value is never included. See [`doctor`](#goldfinger-doctor). |
+| `check` | `--json` | `{version, name?, inSync, added, removed:[{repo,reason}], defaultBranchMoved:[{repo,from,to}], ownerTypeFlipped:{from,to}\|null}`. Exit code is unchanged (`0`/`1`/`2`). |
+| `selections` | `--json` | `{version, selections:[{name, path, owner, repoCount, resolvedAt}]}`; an unreadable entry carries an `error` field instead of being dropped; an empty registry is `selections: []`, not an error. |
+| `mirror` | `--report-json` | `{version, workspace, owner, repoCount, branch?, repos:[…]}` (see [`mirror`](#goldfinger-mirror)). |
+| `apply` | `--plan-json` | `{version, dry_run, sign_mode, branch, pr_title, commit_message, pr_body_present, labels, reviewers, draft, batch_size, batch_pause, command_program, command_redacted, base_branch_source, repos:[{repo, base_branch_recorded}], repos_total}` — the invocation goldfinger will make, **not** the diff. See [`apply`](#goldfinger-apply). |
+
+Each payload carries an explicit top-level `version` so consumers can branch on
+shape across releases — the sole exception is `select --json`, whose version is
+the nested `selection.version` (the lockfile version), so the nested object stays
+structurally identical to the on-disk lockfile.
+
+### Exit codes
+
+goldfinger's exit status is a stable contract, so scripts and agents can branch
+on outcome without scraping text:
+
+| Code | Meaning | Examples |
+| ---- | ------- | -------- |
+| `0` | **Success** — the command did its job | in-sync `check`, a completed dry-run, a finished `mirror`, a written `select` |
+| `1` | **A domain outcome, not a crash** — the command ran fine and is reporting a state you asked about | `check` found drift (the report is already on stdout; nothing on stderr); `doctor` had a failed check |
+| `2` | **Error** — the command could not do its job | bad flags, no token / auth failure, a missing child tool, an unreadable lockfile, a zero-repo `select` without `--allow-empty`; `doctor` itself could not run |
+
+`check` and `doctor` use `1` for a domain outcome (drift found / a failed
+preflight check), so `if goldfinger check; then …` cleanly separates in-sync
+(`0`) from drift (`1`) from error (`2`), and likewise `doctor` separates
+all-clear from a failed check from a doctor that couldn't run. A wrong or
+empty-result token trips `2`, never a false "in sync": `select` treats a
+zero-repo match as an error (pass `--allow-empty` for the rare intended case)
+rather than silently freezing an empty fleet.
 
 ## Install
 
@@ -461,6 +563,22 @@ export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
 
 Either way you set one token; goldfinger maps it to the env vars ghorg and
 multi-gitter each expect.
+
+**Token precedence — and a footgun to know about.** goldfinger resolves its token
+in this order:
+
+1. `GOLD_FINGER_PAT` if set (explicit; the CI path).
+2. otherwise `gh auth token` — your local gh session.
+
+The catch: the `gh auth token` subprocess **itself** honours an ambient
+`GH_TOKEN`/`GITHUB_TOKEN` in the environment, so a stray one of those can silently
+change *which identity* goldfinger (and, downstream, ghorg) authenticates as —
+producing a wrong-identity result that looks like "no repos found" rather than an
+auth error. goldfinger surfaces this: every `select`/`check`/`mirror`/`apply` run
+prints its resolved token source and authenticated principal on stderr, and warns
+when a gh-sourced token may be shadowed by an ambient `GH_TOKEN`/`GITHUB_TOKEN`.
+If you see an unexpected identity, `unset GITHUB_TOKEN GH_TOKEN` or set
+`GOLD_FINGER_PAT` explicitly. The token value is never printed.
 
 ## Requirements
 

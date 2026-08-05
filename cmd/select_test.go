@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -58,14 +59,19 @@ func TestRunSelectWritesLockfile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "goldfinger.selection")
 	var out, errOut bytes.Buffer
 
-	err := runSelect(context.Background(), r,
-		targeting{org: "redscaresu", topics: []string{"platform"}},
-		nil, path, "goldfinger test", &out, &errOut)
+	err := runSelect(context.Background(), r, selectOpts{
+		t:             targeting{org: "redscaresu", topics: []string{"platform"}},
+		selectionPath: path,
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+	}, &out, &errOut)
 	require.NoError(t, err)
 
 	// Only the non-archived platform repo is selected.
 	assert.Equal(t, "redscaresu/platform-svc\n", out.String())
 	assert.Contains(t, errOut.String(), "1 repo(s) written")
+	// The resolved identity is surfaced on stderr for wrong-token diagnosis.
+	assert.Contains(t, errOut.String(), "authenticated as redscaresu")
 
 	sel, err := selection.Read(path)
 	require.NoError(t, err)
@@ -78,13 +84,53 @@ func TestRunSelectWritesLockfile(t *testing.T) {
 	assert.Equal(t, "redscaresu/platform-svc", sel.Repos[0].FullName())
 }
 
+func TestRunSelectJSON(t *testing.T) {
+	r := fakeResolver{
+		login:     "redscaresu",
+		ownerType: models.OwnerUser,
+		repos: []models.Repo{
+			{Owner: "redscaresu", Name: "platform-svc", DefaultBranch: "main", Topics: []string{"platform"}},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	var out, errOut bytes.Buffer
+
+	err := runSelect(context.Background(), r, selectOpts{
+		t:             targeting{org: "redscaresu", topics: []string{"platform"}},
+		selectionPath: path,
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+		asJSON:        true,
+	}, &out, &errOut)
+	require.NoError(t, err)
+
+	// stdout is exactly the JSON wrapper — no repo-name lines leak in.
+	var rep selectJSONReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+	assert.Equal(t, path, rep.SelectionPath)
+	assert.Equal(t, models.SelectionVersion, rep.Selection.Version, "nested selection carries the lockfile version")
+	require.Len(t, rep.Selection.Repos, 1)
+	assert.Equal(t, "redscaresu/platform-svc", rep.Selection.Repos[0].FullName())
+
+	// The nested selection is field-for-field the persisted lockfile.
+	onDisk, err := selection.Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, onDisk.Owner, rep.Selection.Owner)
+	assert.Equal(t, onDisk.Repos, rep.Selection.Repos)
+
+	// Human banners stay on stderr.
+	assert.Contains(t, errOut.String(), "1 repo(s) written")
+	assert.NotContains(t, out.String(), "written to")
+}
+
 func TestRunSelectPropagatesErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "goldfinger.selection")
 
 	t.Run("verify error", func(t *testing.T) {
 		err := runSelect(context.Background(),
 			fakeResolver{verifyErr: errors.New("bad token")},
-			targeting{org: "acme", allRepos: true}, nil, path, "t", &bytes.Buffer{}, &bytes.Buffer{})
+			selectOpts{t: targeting{org: "acme", allRepos: true}, selectionPath: path, tool: "t"},
+			&bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "verifying token")
 	})
@@ -92,9 +138,54 @@ func TestRunSelectPropagatesErrors(t *testing.T) {
 	t.Run("list error", func(t *testing.T) {
 		err := runSelect(context.Background(),
 			fakeResolver{listErr: errors.New("not found")},
-			targeting{org: "acme", allRepos: true}, nil, path, "t", &bytes.Buffer{}, &bytes.Buffer{})
+			selectOpts{t: targeting{org: "acme", allRepos: true}, selectionPath: path, tool: "t"},
+			&bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestRunSelectEmptyResult(t *testing.T) {
+	// A valid token whose ListRepos yields repos that match no topic -> zero
+	// selected. Without --allow-empty this is an error and no lockfile is written.
+	r := fakeResolver{
+		login:     "someone-else",
+		ownerType: models.OwnerUser,
+		repos: []models.Repo{
+			{Owner: "acme", Name: "web", Topics: []string{"frontend"}},
+		},
+	}
+
+	t.Run("errors and does not write", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "goldfinger.selection")
+		err := runSelect(context.Background(), r, selectOpts{
+			t:             targeting{org: "acme", topics: []string{"platform"}},
+			selectionPath: path,
+			tool:          "t",
+			source:        tokenSourceGh,
+		}, &bytes.Buffer{}, &bytes.Buffer{})
+		require.Error(t, err)
+		// The diagnostic names the identity and inputs so a wrong token is obvious.
+		assert.Contains(t, err.Error(), "no repositories matched")
+		assert.Contains(t, err.Error(), "someone-else")
+		assert.Contains(t, err.Error(), "--allow-empty")
+		_, statErr := selection.Read(path)
+		require.Error(t, statErr, "no lockfile should be written on an empty result")
+	})
+
+	t.Run("allow-empty writes an empty lockfile", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "goldfinger.selection")
+		err := runSelect(context.Background(), r, selectOpts{
+			t:             targeting{org: "acme", topics: []string{"platform"}},
+			selectionPath: path,
+			tool:          "t",
+			source:        tokenSourceGh,
+			allowEmpty:    true,
+		}, &bytes.Buffer{}, &bytes.Buffer{})
+		require.NoError(t, err)
+		sel, err := selection.Read(path)
+		require.NoError(t, err)
+		assert.Empty(t, sel.Repos)
 	})
 }
 
@@ -118,9 +209,12 @@ func TestRunSelectRecordsBranchPresence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "goldfinger.selection")
 
 	// Duplicate --branch-presence dev must be deduped.
-	err := runSelect(context.Background(), r,
-		targeting{org: "redscaresu", topics: []string{"platform"}},
-		[]string{"dev", "dev"}, path, "goldfinger test", &bytes.Buffer{}, &bytes.Buffer{})
+	err := runSelect(context.Background(), r, selectOpts{
+		t:               targeting{org: "redscaresu", topics: []string{"platform"}},
+		branchesToCheck: []string{"dev", "dev"},
+		selectionPath:   path,
+		tool:            "goldfinger test",
+	}, &bytes.Buffer{}, &bytes.Buffer{})
 	require.NoError(t, err)
 
 	// dev probed once each for on-dev and no-dev only: the archived repo is not in
