@@ -21,9 +21,8 @@ by AI agents as much as by people** — see [For AI agents](#for-ai-agents).
 
 ## It's a wrapper over ghorg and multi-gitter
 
-goldfinger does **not** clone repos or open PRs itself. It is a thin wrapper that
-shells out to two existing, mature CLI tools and coordinates them around one
-shared selection:
+goldfinger clones nothing and opens no PRs itself — it shells out to two mature
+CLIs and coordinates them around one shared selection:
 
 | You run | goldfinger shells out to | which does the work |
 |---|---|---|
@@ -39,11 +38,6 @@ Everything goldfinger *itself* does is the glue around those two calls:
   and maps it to the env vars each tool expects (`GHORG_GITHUB_TOKEN`,
   `GITHUB_TOKEN`), checks both are installed, and frames their output. (Auth
   setup is in [Install](#install) — it reuses your `gh` login by default.)
-
-So goldfinger is a few hundred lines of orchestration, not a reimplementation.
-Rebuilding ghorg or multi-gitter would at best match tools that are already fast
-(both Go, both shell out to `git`, both do bounded-concurrency clones) — the win
-is making them share one reviewable selection.
 
 ## Why this exists
 
@@ -464,9 +458,8 @@ precedence over the gh session. It needs Contents + Pull requests read/write:
 export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
 ```
 
-Either way goldfinger resolves a single token and maps it to the env vars ghorg
-and multi-gitter expect, so you never juggle three. Run `goldfinger guide` for
-the operator playbook.
+Either way you set one token; goldfinger maps it to the env vars ghorg and
+multi-gitter each expect.
 
 ## Requirements
 
