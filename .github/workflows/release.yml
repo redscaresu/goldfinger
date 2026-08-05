@@ -117,3 +117,43 @@ jobs:
           fi
           git commit -m "goldfinger ${GITHUB_REF_NAME}"
           git push
+
+  # Smoke-test the published formula the way a user would: tap the real repo and
+  # `brew install redscaresu/tap/goldfinger`. Proves the release asset URL/sha256
+  # are correct for macOS, that `depends_on` pulls ghorg + multi-gitter, and that
+  # the installed binary reports this tag's version. Runs on macOS (the primary
+  # audience). Self-gating like the publish job: with no HOMEBREW_TAP_TOKEN there
+  # is nothing in the tap to test, so it skips cleanly.
+  homebrew-smoke:
+    needs: homebrew
+    runs-on: macos-latest
+    steps:
+      - name: Guard on tap token
+        id: guard
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HOMEBREW_TAP_TOKEN not set — no formula published, skipping smoke test."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install from the tap and verify
+        if: steps.guard.outputs.run == 'true'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          brew install redscaresu/tap/goldfinger
+          got="$(goldfinger --version)"
+          echo "installed: ${got}"
+          case "${got}" in
+            *"${GITHUB_REF_NAME}"*) echo "version matches ${GITHUB_REF_NAME}" ;;
+            *) echo "::error::version mismatch: got '${got}', expected ${GITHUB_REF_NAME}"; exit 1 ;;
+          esac
+          # Prove the depends_on chain resolved onto PATH.
+          command -v ghorg >/dev/null       || { echo "::error::ghorg not installed by depends_on"; exit 1; }
+          command -v multi-gitter >/dev/null || { echo "::error::multi-gitter not installed by depends_on"; exit 1; }
+          echo "ghorg + multi-gitter present via depends_on"

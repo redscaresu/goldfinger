@@ -142,11 +142,17 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install ghorg and multi-gitter
+        # Install the two runtime CLIs the way real users do — Homebrew bottles,
+        # the same `depends_on` goldfinger's formula declares — not `go install`.
+        # Prebuilt (faster) and immune to setup-go's GOTOOLCHAIN=local pin, which
+        # made `go install ghorg` fail when ghorg needed a newer Go than go.mod
+        # (the reason go.mod was bumped to 1.26.5). Uses current core versions
+        # rather than a pin, so e2e also catches breakage from new tool releases.
         if: steps.guard.outputs.run == 'true'
-        run: |
-          go install github.com/gabrie30/ghorg@v1.11.14
-          go install github.com/lindell/multi-gitter@latest
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install ghorg multi-gitter
       - name: Configure git identity
         # multi-gitter authors the commit from git config; CI has none by default.
         if: steps.guard.outputs.run == 'true'
