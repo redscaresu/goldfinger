@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
 
+# Least-privilege default for every job. Only the coverage job overrides this
+# (contents: write) to publish its badge to the `badges` branch.
+permissions:
+  contents: read
+
 env:
   # Opt JavaScript actions into Node 24 ahead of GitHub's deprecation of Node 20,
   # so any breakage surfaces on our schedule rather than at the forced flip.
@@ -16,10 +21,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -40,9 +47,11 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Measure coverage and enforce the 80% floor
@@ -63,8 +72,11 @@ jobs:
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass the coverage number through the environment rather than
+          # interpolating ${{ }} straight into the script body (template-injection).
+          PCT: ${{ steps.cov.outputs.pct }}
         run: |
-          pct='${{ steps.cov.outputs.pct }}'
+          pct="$PCT"
           color=red
           awk "BEGIN{exit !($pct>=60)}" && color=yellow
           awk "BEGIN{exit !($pct>=70)}" && color=yellowgreen
@@ -95,9 +107,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Run gitleaks
         run: |
           curl -sSfL -o /tmp/gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
@@ -108,9 +121,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Run govulncheck
@@ -124,7 +139,9 @@ jobs:
     needs: [test]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Guard on secret
         id: guard
         env:
@@ -138,7 +155,7 @@ jobs:
           fi
       - name: Setup Go
         if: steps.guard.outputs.run == 'true'
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Install ghorg and multi-gitter
@@ -189,9 +206,11 @@ jobs:
             goarch: arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Build binary
@@ -200,7 +219,7 @@ jobs:
           mkdir -p dist
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -trimpath -o dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: goldfinger-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }}
