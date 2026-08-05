@@ -13,20 +13,16 @@ then drives two best-in-class tools against that exact set:
   across the selection and open PRs.
 
 The value goldfinger adds is not mirroring or PR-fanout — those tools already do
-each well. It's that **"the repos I mirror" and "the repos I change" are provably
-the same set**, captured in one artifact you can inspect before anything runs.
-
-goldfinger is **built to be driven by AI agents as much as by people**: every
-`apply` is a dry-run until you add `--confirm`, the selection is a JSON lockfile,
-errors name the next action, and `goldfinger guide` ships the whole playbook
-inside the binary — so an agent can self-orient, act safely, and recover without
-a human narrating each step. See [For AI agents](#for-ai-agents).
+each well. It's that fleet work stays **cheap and rate-limit-safe** (resolve the
+set with one API call, then read via local clones instead of the API) and that
+**the repos you mirror and the repos you change are provably the same set**,
+frozen in one artifact you inspect before anything runs. It's **built to be driven
+by AI agents as much as by people** — see [For AI agents](#for-ai-agents).
 
 ## It's a wrapper over ghorg and multi-gitter
 
-goldfinger does **not** clone repos or open PRs itself. It is a thin wrapper that
-shells out to two existing, mature CLI tools and coordinates them around one
-shared selection:
+goldfinger clones nothing and opens no PRs itself — it shells out to two mature
+CLIs and coordinates them around one shared selection:
 
 | You run | goldfinger shells out to | which does the work |
 |---|---|---|
@@ -35,38 +31,38 @@ shared selection:
 
 Everything goldfinger *itself* does is the glue around those two calls:
 
-- **Resolve the selection** — one GitHub API pass turns `--org` / `--topic` into a
-  concrete `owner/name` list, frozen in a lockfile.
-- **Feed both tools the identical set** — ghorg via a `--target-repos-path` names
-  file, multi-gitter via repeated `--repo` flags. Neither tool re-discovers, so
-  the two phases can't drift apart.
-- **No token to set up** — if you're already logged in with the GitHub CLI,
-  goldfinger uses that session automatically (`gh auth token`); nothing to export.
-  It maps that one token to the env vars each tool expects
-  (`GHORG_GITHUB_TOKEN`, `GITHUB_TOKEN`), checks both tools are installed, and
-  frames their output. `GOLD_FINGER_PAT` is the fallback for when there's no local
-  gh login (e.g. CI).
-
-So goldfinger is a few hundred lines of orchestration, not a reimplementation.
-Rebuilding ghorg or multi-gitter would at best match tools that are already fast
-(both Go, both shell out to `git`, both do bounded-concurrency clones) — the win
-is making them share one reviewable selection.
+- **Feed both tools the identical set** — the lockfile is handed to ghorg via a
+  `--target-repos-path` names file and to multi-gitter via repeated `--repo`
+  flags. Neither tool re-discovers, so the two phases can't drift apart.
+- **Map one token, check the tools** — goldfinger resolves a single GitHub token
+  and maps it to the env vars each tool expects (`GHORG_GITHUB_TOKEN`,
+  `GITHUB_TOKEN`), checks both are installed, and frames their output. (Auth
+  setup is in [Install](#install) — it reuses your `gh` login by default.)
 
 ## Why this exists
 
-Fleet changes (bump a base image, patch a dependency, rotate a CI config) have
-two phases that are usually done with different, disconnected tooling:
+goldfinger is built primarily for agents. An agent doing fleet work — "which of
+our repos still pin `golang:1.22`?", "patch this CVE everywhere" — reaches for the
+GitHub API to list repos, read files, and search code, and immediately hits two
+walls: **rate limits** (5,000 REST requests/hour, plus a stricter secondary limit
+of ~80 content-writing requests/minute) and **latency** (every read is a paginated
+round-trip). At fleet scale that's slow and quota-hungry.
 
-1. **Get the repos locally** so you can grep, open them in an editor, and figure
-   out *what* needs changing and *where*. (People hand-roll clone loops, or use
-   ghorg.)
-2. **Apply the change and open PRs.** (People hand-roll scripts, or use
-   multi-gitter.)
+goldfinger spends the API budget only where it has to:
 
-The gap: the set you *explored* in phase 1 and the set you *changed* in phase 2
-are computed separately and drift apart — different filters, different moments in
-time, a repo added or retopic'd in between. goldfinger closes that gap by making
-the selection a single frozen artifact that feeds both phases.
+1. **Resolve once, cheaply.** A single read-only API pass turns `--org` / `--topic`
+   into a concrete repo set, frozen in the lockfile. The topic / `--all-repos`
+   filter means you only pull the repos you actually need.
+2. **Read by cloning, not by API.** `mirror` hands that set to `ghorg`, which
+   `git clone`s them locally. `git` isn't governed by the REST rate limits, and
+   grepping a local checkout is far faster than paginating the contents/search
+   API — so the high-volume "figure out what to change" work is cheap and fast.
+3. **Write under the limit.** `apply` batches PR creation with pauses so the
+   content-writing phase stays under the secondary rate limit instead of tripping
+   it partway through a fleet.
+
+A useful side effect of freezing the set up front: the repos you *explore* and the
+repos you *change* are provably the same list — no filter drift between phases.
 
 ## The model
 
@@ -84,13 +80,8 @@ the selection a single frozen artifact that feeds both phases.
 ## Quickstart
 
 ```sh
-# No token setup needed if you're already logged in with the GitHub CLI —
-# goldfinger picks up your `gh auth` session automatically and maps it to
-# ghorg + multi-gitter. (Log in once with: gh auth login)
-#
-# Only if you have no local gh login (e.g. CI), set a PAT explicitly — it
-# overrides the gh session when present:
-# export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
+# Auth: uses your `gh auth login` session automatically; set GOLD_FINGER_PAT
+# instead in CI. Details under Install, below.
 
 # 1. freeze the target set -> ./goldfinger.selection
 goldfinger select --org mycompany --topic platform
@@ -467,9 +458,8 @@ precedence over the gh session. It needs Contents + Pull requests read/write:
 export GOLD_FINGER_PAT=<a GitHub PAT with Contents + Pull requests read/write>
 ```
 
-Either way goldfinger resolves a single token and maps it to the env vars ghorg
-and multi-gitter expect, so you never juggle three. Run `goldfinger guide` for
-the operator playbook.
+Either way you set one token; goldfinger maps it to the env vars ghorg and
+multi-gitter each expect.
 
 ## Requirements
 
@@ -479,10 +469,8 @@ the operator playbook.
   install instructions if missing.
 - A **git identity** (`git config user.name` / `user.email`) — multi-gitter
   authors the `apply` commit from it.
-- **A GitHub token** for API discovery. goldfinger reuses your local
-  `gh auth login` session by default and maps the token to the env vars ghorg
-  (`GHORG_GITHUB_TOKEN`) and multi-gitter (`GITHUB_TOKEN`) expect; set
-  `GOLD_FINGER_PAT` when there's no local gh login, such as in CI.
+- **A GitHub token** for API discovery — your `gh auth login` session by default,
+  or `GOLD_FINGER_PAT` in CI. See [Install](#install) for the full auth setup.
 
 ## For AI agents
 
