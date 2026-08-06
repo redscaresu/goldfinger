@@ -13,8 +13,9 @@ permissions:
 
 # Serialise runs for a given tag. The create-release guard is race-free within a
 # single run, but a re-run overlapping the original (same tag) could otherwise
-# have two runs each miss the release and both create/upload. Queue them instead
-# of cancelling — a release mid-publish must never be interrupted.
+# have two runs each miss the release and both create/upload. cancel-in-progress
+# false makes a second run wait for the in-flight one rather than cancel it — a
+# release mid-publish must never be interrupted.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
