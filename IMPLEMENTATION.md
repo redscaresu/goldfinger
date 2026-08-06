@@ -275,7 +275,11 @@ PR-opening apply remains the human's to run.
    dry-run-by-default safety rule, copy-paste examples) — reachable at runtime by
    any consuming agent, wherever it runs — and an `AGENTS.md` for contributor
    agents (complements the repo `CLAUDE.md`). The JSON lockfile and
-   next-action error messages are already agent-legible; keep them so.
+   next-action error messages are already agent-legible; keep them so. The
+   agent-ergonomics follow-up (issue #27) adds two self-describing surfaces:
+   `guide --json` (the input surface — a machine catalogue of commands/flags) and
+   `goldfinger schema` (the output surface — JSON Schema for the lockfile and every
+   payload, hand-authored but pinned to the Go types by golden + reflection tests).
 
 Dependencies: `spf13/cobra`, `google/go-github/v89`, `stretchr/testify`. Plus two
 **runtime** CLI dependencies invoked via `exec`: **ghorg** and **multi-gitter**

@@ -21,6 +21,7 @@ const (
 	mirrorReportVersion     = 1
 	applyPlanVersion        = 1
 	doctorReportVersion     = 1
+	schemaCatalogueVersion  = 1
 )
 
 // emitJSON writes v as indented JSON followed by a newline to w. It is the single

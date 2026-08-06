@@ -56,6 +56,14 @@ it does not reimplement mirroring or PR-fanout.
   branch never checked reports `unknown` — do not add code that guesses it.
 - Tokens go to child tools via their env vars (`GHORG_GITHUB_TOKEN`,
   `GITHUB_TOKEN`), never argv. Tests assert no token appears in argv.
+- The machine surfaces are self-describing and must stay honest: `guide --json`
+  is the input catalogue (kept in sync with the validators by tests) and
+  `goldfinger schema` is the output contract — hand-authored JSON Schema for the
+  lockfile and every payload, pinned to the Go structs by a golden file **and** a
+  reflection test (`properties` = the struct's json fields; `required` = its
+  non-omitempty fields). Change a payload's shape and you must regenerate the
+  golden (`go test ./cmd -run TestSchema -update`) and keep the schema builder in
+  step, or the tests fail — that coupling is deliberate, don't loosen it.
 - Flat packages (`cmd/`, `models/`, `client/`, `discovery/`, `selection/`,
   `mirror/`, `apply/`); no `internal/`/`pkg/`. Tests alongside code, testify.
 - Go module deps are pinned (cobra, go-github, testify); adding one needs asking.
