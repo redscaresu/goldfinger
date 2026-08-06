@@ -3,11 +3,13 @@
 # End-to-end test for goldfinger against a dedicated sandbox repo.
 #
 # Exercises the whole pipeline and asserts each stage:
-#   select --topic   -> isolates exactly the sandbox repo
-#   mirror           -> clones it locally
-#   mirror --purpose -> clones into an ephemeral, date-stamped ~/goldfinger/<purpose>-<date>
-#   apply --dry-run  -> reports a change but pushes NOTHING
-#   apply (real)     -> opens a real PR with the expected diff
+#   select --topic    -> isolates exactly the sandbox repo
+#   mirror            -> clones it locally
+#   mirror --purpose  -> clones into an ephemeral, date-stamped ~/goldfinger/<purpose>-<date>
+#   workspaces list   -> enumerates those snapshots + reads their sidecar manifests
+#   workspaces prune  -> previews by default, deletes only the matched purpose with --confirm
+#   apply --dry-run   -> reports a change but pushes NOTHING
+#   apply (real)      -> opens a real PR with the expected diff
 # then tears down (closes the PR, deletes the branch, removes the --purpose dir)
 # so the sandbox and home dir are left exactly as they started.
 #
@@ -83,6 +85,9 @@ HOME="$PHOME" "$GF" mirror --selection "$SELECTION" --purpose "$PURPOSE" >/dev/n
 # name — match by glob on the purpose prefix.
 PDIR="$(find "$PHOME/goldfinger" -maxdepth 1 -type d -name "$PURPOSE-*" 2>/dev/null | head -1)"
 [ -n "$PDIR" ] || fail "--purpose did not create <home>/goldfinger/$PURPOSE-<stamp>"
+# Canonicalize: `workspaces` resolves --root via EvalSymlinks, so its JSON paths
+# are physical (e.g. /private/var/... on macOS) — match that for the path asserts.
+PDIR="$(cd "$PDIR" && pwd -P)"
 case "$PDIR" in
 	*-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9].[0-9][0-9][0-9]) : ;;
 	*) fail "--purpose dir '$PDIR' is not timestamped YYYY-MM-DD-HHMMSS.mmm" ;;
@@ -108,9 +113,50 @@ HOME="$PHOME" "$GF" mirror --selection "$SELECTION" --purpose "$BPURPOSE" --bran
 # --purpose + --branch names the dir <purpose>-<branch>-<stamp>.
 BDIR="$(find "$PHOME/goldfinger" -maxdepth 1 -type d -name "$BPURPOSE-$TESTBRANCH-*" 2>/dev/null | head -1)"
 [ -n "$BDIR" ] || fail "--purpose --branch did not create <home>/goldfinger/$BPURPOSE-$TESTBRANCH-<stamp>"
+BDIR="$(cd "$BDIR" && pwd -P)"
 [ -d "$BDIR/$OWNER/$REPO/.git" ] || fail "--branch workspace missing clone $OWNER/$REPO"
 HEAD_BRANCH="$(git -C "$BDIR/$OWNER/$REPO" rev-parse --abbrev-ref HEAD)"
 [ "$HEAD_BRANCH" = "$TESTBRANCH" ] || fail "--branch: checked-out branch is '$HEAD_BRANCH', want '$TESTBRANCH'"
+
+# The two mirror --purpose steps above left two real snapshots under
+# $PHOME/goldfinger: PDIR (purpose=$PURPOSE, no branch) and BDIR (purpose=$BPURPOSE,
+# branch=$TESTBRANCH). Exercise `workspaces` against them — the real filesystem the
+# unit tests only simulate with temp dirs — and let prune do the teardown it's for.
+WSROOT="$PHOME/goldfinger"
+
+echo "==> workspaces list --json (enumerates both snapshots + their manifests)"
+LIST="$("$GF" workspaces list --root "$WSROOT" --json)"
+echo "$LIST" | jq -e --arg p "$PDIR" '[.workspaces[].path] | index($p)' >/dev/null \
+	|| fail "workspaces list did not include $PDIR"
+echo "$LIST" | jq -e --arg p "$BDIR" '[.workspaces[].path] | index($p)' >/dev/null \
+	|| fail "workspaces list did not include $BDIR"
+# The plain --purpose snapshot's sidecar manifest is present and records the right
+# purpose + owner (the fields prune --purpose filters on).
+[ -f "$PDIR/goldfinger-workspace.json" ] || fail "sidecar manifest missing in $PDIR"
+echo "$LIST" | jq -e --arg p "$PDIR" --arg purpose "$PURPOSE" --arg owner "$OWNER" \
+	'.workspaces[] | select(.path==$p) | (.manifestPresent and .purpose==$purpose and .owner==$owner)' >/dev/null \
+	|| fail "workspaces list: manifest for $PDIR missing/incorrect (purpose/owner)"
+# The branch snapshot records its branch in the manifest.
+echo "$LIST" | jq -e --arg p "$BDIR" --arg b "$TESTBRANCH" \
+	'.workspaces[] | select(.path==$p) | .branch==$b' >/dev/null \
+	|| fail "workspaces list: branch snapshot $BDIR missing branch $TESTBRANCH"
+
+echo "==> workspaces prune --purpose previews by default (matches but deletes nothing)"
+PREVIEW="$("$GF" workspaces prune --root "$WSROOT" --purpose "$PURPOSE" --json)"
+echo "$PREVIEW" | jq -e '.pruned==false and (.workspaces|length)==1' >/dev/null \
+	|| fail "prune --purpose preview should match exactly 1 snapshot with pruned=false"
+[ -d "$PDIR" ] || fail "prune preview (no --confirm) removed $PDIR — it must only preview"
+
+echo "==> workspaces prune --purpose --confirm (removes only the matched snapshot)"
+PRUNE="$("$GF" workspaces prune --root "$WSROOT" --purpose "$PURPOSE" --confirm --json)"
+echo "$PRUNE" | jq -e '.pruned==true and (.workspaces|length)==1' >/dev/null \
+	|| fail "prune --purpose $PURPOSE --confirm should have removed exactly 1 snapshot"
+[ ! -d "$PDIR" ] || fail "prune --confirm did not remove $PDIR"
+[ -d "$BDIR" ] || fail "prune --purpose $PURPOSE wrongly removed the other snapshot $BDIR"
+
+echo "==> workspaces prune --confirm (unfiltered, clears the remaining snapshot)"
+"$GF" workspaces prune --root "$WSROOT" --confirm >/dev/null
+[ ! -d "$BDIR" ] || fail "unfiltered prune --confirm did not remove $BDIR"
 
 echo "==> apply --dry-run (must not push a branch)"
 "$GF" apply --selection "$SELECTION" --branch "$BRANCH" \

@@ -16,9 +16,11 @@ then drives two best-in-class tools against that exact set:
 The value goldfinger adds is not mirroring or PR-fanout — those tools already do
 each well. It's that fleet work stays **cheap and rate-limit-safe** (resolve the
 set with one API call, then read via local clones instead of the API) and that
-**the repos you mirror and the repos you change are provably the same set**,
-frozen in one artifact you inspect before anything runs. It's **built to be driven
-by AI agents as much as by people** — see [For AI agents](#for-ai-agents).
+**the repos you mirror and the repos you change are provably the same selection**,
+frozen in one artifact you inspect before anything runs. (The mirror is your local
+read/test copy; multi-gitter re-clones the same repos to apply the change — it's
+the *set* that's shared, driven by the one lockfile, not a clone.) It's **built to
+be driven by AI agents as much as by people** — see [For AI agents](#for-ai-agents).
 
 ## It's a wrapper over ghorg and multi-gitter
 
@@ -153,7 +155,7 @@ goldfinger select --org mycompany --all-repos
   "ownerType": "Organization",
   "filter": { "topics": ["platform"] },
   "resolvedAt": "2026-08-01T15:17:53Z",
-  "tool": "goldfinger v0.2.0",
+  "tool": "goldfinger v0.3.0",
   "branchesChecked": ["dev"],
   "repos": [
     { "owner": "mycompany", "name": "billing", "cloneURL": "https://github.com/mycompany/billing.git", "defaultBranch": "main", "topics": ["platform"], "branchPresence": { "dev": true } }
@@ -581,8 +583,8 @@ isn't already on your PATH (no Go needed):
 ```sh
 curl -sSfL https://raw.githubusercontent.com/redscaresu/goldfinger/main/install.sh | sh
 # pin a version / install dir (env vars go before `sh`, so they reach the script):
-#   curl -sSfL …/install.sh | GOLDFINGER_VERSION=v0.2.0 GOLDFINGER_BIN="$HOME/.local/bin" sh
-goldfinger --version   # -> goldfinger version v0.2.0
+#   curl -sSfL …/install.sh | GOLDFINGER_VERSION=v0.3.0 GOLDFINGER_BIN="$HOME/.local/bin" sh
+goldfinger --version   # -> goldfinger version v0.3.0
 ```
 
 Or, with Homebrew on macOS/Linux — this also pulls in `ghorg` and `multi-gitter`
@@ -613,8 +615,11 @@ does all of this for you). Browse builds at
 Or install from source with Go:
 
 ```sh
-go install github.com/redscaresu/goldfinger/cmd@v0.2.0   # or @latest
-# or build the repo
+go install github.com/redscaresu/goldfinger/cmd@v0.3.0   # or @latest
+# The main package lives at ./cmd, so Go names the binary `cmd`. Rename it (Go
+# installs to $GOBIN if set, otherwise $(go env GOPATH)/bin):
+d="$(go env GOBIN)"; d="${d:-$(go env GOPATH)/bin}"; mv "$d/cmd" "$d/goldfinger"
+# or build the repo (the Makefile already outputs a `goldfinger`-named binary)
 git clone https://github.com/redscaresu/goldfinger && cd goldfinger && make build  # -> bin/goldfinger
 ```
 
@@ -713,8 +718,3 @@ make hooks   # install the gitleaks pre-commit hook
 CI runs the unit tests, gitleaks, govulncheck, and an end-to-end job that opens
 and tears down a real PR on a sandbox repo. Contributor rules are in `AGENTS.md`
 and `CLAUDE.md`.
-
-## Design docs
-
-- `IMPLEMENTATION.md` — the build plan: package layout, the selection format, the
-  ghorg/multi-gitter handoffs, build order, and pinned decisions.

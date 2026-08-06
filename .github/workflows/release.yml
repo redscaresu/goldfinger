@@ -113,8 +113,9 @@ jobs:
   # Combine the per-binary checksums into one SHA256SUMS manifest. Each matrix
   # leg builds in isolation, so it can only see its own binary — this job waits
   # for all four, pulls their .sha256 assets back off the release, concatenates
-  # them, and attaches the manifest the README's `shasum -a 256 -c SHA256SUMS`
-  # verify step expects.
+  # them, and attaches a combined SHA256SUMS manifest (a convenience for
+  # verifying every asset at once; the README's documented verify step uses the
+  # per-binary `.sha256` sidecar).
   checksums:
     needs: build-and-release
     runs-on: ubuntu-latest
