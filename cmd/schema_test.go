@@ -97,6 +97,9 @@ func TestSchemasMatchTheirStructs(t *testing.T) {
 		{"capabilities", reflect.TypeOf(capabilities{}), capabilitiesSchemaObj()},
 		{"commandCapability", reflect.TypeOf(commandCapability{}), commandCapSchemaObj()},
 		{"flagCapability", reflect.TypeOf(flagCapability{}), flagCapSchemaObj()},
+		{"workspacesReport", reflect.TypeOf(workspacesReport{}), workspacesReportSchemaObj()},
+		{"workspaceInfo", reflect.TypeOf(workspaceInfo{}), workspaceInfoSchemaObj()},
+		{"workspaceManifest", reflect.TypeOf(workspaceManifest{}), workspaceManifestSchemaObj()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -195,6 +198,19 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 			Repos: []mirrorRepoInfo{{Repo: "acme/a", DefaultBranch: "main", BranchStatus: branchStatusHas}},
 		},
 		"capabilities": buildCapabilities(newRootCmd()),
+		"workspaces": workspacesReport{
+			Version: workspacesReportVersion, Root: "/home/u/goldfinger",
+			Action: workspaceActionList, Pruned: false,
+			Workspaces: []workspaceInfo{{
+				Path: "/home/u/goldfinger/audit-dev-2026-08-05-101112.131", Purpose: "audit",
+				Branch: "dev", Stamp: "2026-08-05-101112.131", Owner: "acme", SizeBytes: 4096,
+				CreatedAt: time.Now().UTC().Format(time.RFC3339), ManifestPresent: true,
+			}},
+		},
+		"workspace-manifest": workspaceManifest{
+			Version: workspaceManifestVersion, Purpose: "audit", Branch: "dev",
+			Stamp: "2026-08-05-101112.131", Owner: "acme", CreatedAt: time.Now().UTC(),
+		},
 	}
 
 	cat := buildSchemaCatalogue()
@@ -230,6 +246,17 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 			BatchSize: nil, BatchPause: nil, CommandProgram: "sed", CommandRedacted: true,
 			BaseBranchSrc: "per-repo-default",
 			Repos:         []applyPlanRepo{}, ReposTotal: 0,
+		}},
+		// A manifest-less snapshot: the omitempty purpose/branch/owner fields drop
+		// out entirely, exercising that the schema marks them optional (only
+		// path/sizeBytes/manifestPresent are required).
+		{"workspaces", workspacesReport{
+			Version: workspacesReportVersion, Root: "/home/u/goldfinger",
+			Action: workspaceActionPrune, Pruned: false,
+			Workspaces: []workspaceInfo{{
+				Path: "/home/u/goldfinger/legacy-2026-01-02-030405.006",
+				Stamp: "2026-01-02-030405.006", SizeBytes: 0, ManifestPresent: false,
+			}},
 		}},
 	}
 	for _, nv := range nullVariants {
@@ -365,7 +392,7 @@ func TestEveryJSONEmittingCommandHasASchema(t *testing.T) {
 	surfaceKey := map[string]string{
 		"select": "select", "check": "check", "selections": "selections",
 		"doctor": "doctor", "mirror": "mirror-report", "apply": "apply-plan",
-		"guide": "capabilities",
+		"guide": "capabilities", "workspaces": "workspaces",
 	}
 	cat := buildSchemaCatalogue()
 	claimedBy := map[string]int{}
@@ -390,10 +417,13 @@ func TestEveryJSONEmittingCommandHasASchema(t *testing.T) {
 		claimedBy[key]++
 	}
 
-	// lockfile has no emitting command (it's the on-disk selection); every other
-	// schema must be claimed by exactly one JSON-emitting command.
+	// On-disk artifacts have no emitting command — the lockfile is the persisted
+	// selection, and workspace-manifest is the sidecar mirror --purpose writes into
+	// each snapshot. Every other schema must be claimed by exactly one
+	// JSON-emitting command.
+	onDiskArtifacts := map[string]bool{"lockfile": true, "workspace-manifest": true}
 	for key := range cat.Schemas {
-		if key == "lockfile" {
+		if onDiskArtifacts[key] {
 			continue
 		}
 		assert.Equalf(t, 1, claimedBy[key], "schema %q must be referenced by exactly one JSON-emitting command, got %d", key, claimedBy[key])

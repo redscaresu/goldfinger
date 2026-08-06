@@ -101,8 +101,15 @@ WORKFLOW
      (a branch's slashes become dashes) —
        goldfinger mirror --purpose keyv-cve --branch dev
        # clones into ~/goldfinger/keyv-cve-dev-2026-08-04-132045.123/<owner>/
+     A --purpose mirror also drops a small sidecar manifest at the snapshot root
+     (goldfinger-workspace.json: purpose, branch, stamp, owner, createdAt) so
+     `workspaces list/prune` (below) get reliable structured metadata — the dir
+     name alone can't be split back into its parts (purpose and a sanitised
+     branch can both contain '-'). The manifest is written only on a successful,
+     non-dry-run mirror.
      goldfinger NEVER deletes the directory — it persists so you can review it;
-     clean it up yourself when done
+     reclaim old snapshots with `goldfinger workspaces prune` (below), or just
+     rm -rf the dir yourself when done
      (e.g. rm -rf ~/goldfinger/keyv-cve-2026-08-04-132045.123).
      A fresh per-campaign clone is pristine by construction, so it never hits the
      divergence trap a long-lived clone can: if upstream rebases/squashes its
@@ -188,6 +195,42 @@ NAMED SELECTIONS
   or `apply --name platform ...`. `goldfinger selections` lists them. --name and
   --selection are mutually exclusive.
 
+WORKSPACE LIFECYCLE (workspaces list | prune)
+  Every `mirror --purpose` leaves a timestamped snapshot dir under the workspace
+  root (default ~/goldfinger); goldfinger never deletes them for you, so they
+  accumulate. `workspaces` is the safe, first-class way to see and reclaim them.
+  It is filesystem-only: it never touches GitHub and runs no git.
+       goldfinger workspaces list          # size + creation time per snapshot
+       goldfinger workspaces list --json   # {version, root, action, workspaces:[…]}
+  list enumerates only the stamped snapshot dirs (those ending -<stamp>); the
+  default ~/goldfinger/<owner> mirror and any unrelated dir are ignored. A
+  snapshot's purpose/branch/owner come from its sidecar manifest when present;
+  a legacy manifest-less snapshot is still listed (createdAt recovered from the
+  dir-name stamp) but with no structured purpose/branch — the dir name is NOT
+  reliably splittable, so don't parse it.
+       goldfinger workspaces prune                      # PREVIEW: shows what it
+                                                        # would remove, deletes 0
+       goldfinger workspaces prune --confirm            # actually delete
+       goldfinger workspaces prune --older-than 168h    # only snapshots >7d old
+       goldfinger workspaces prune --purpose keyv-cve   # only that purpose
+  prune mirrors apply's posture: it PREVIEWS by default and deletes only with
+  --confirm — it never removes a snapshot on its own. Narrow with --older-than
+  <dur> and/or --purpose <name>; with no filter it targets every snapshot (still
+  confirm-gated). Both filters are conservative: --purpose matches only
+  manifest-tagged snapshots whose recorded purpose is EXACTLY that name (a
+  manifest-less snapshot is never matched by purpose), and --older-than skips any
+  snapshot whose age can't be determined — an ambiguous snapshot is kept, not
+  deleted. prune only ever removes a stamp-suffixed dir directly under the root,
+  re-checked immediately before each delete. --older-than/--purpose/--confirm
+  apply to prune only; passing them to list is an error. There is no time-based
+  auto-GC — deletion is always an explicit, confirmed action.
+
+  Not yet available: a single-branch, full-depth clone (one branch, full history)
+  to cut mirror size without the shallow trap. ghorg (as of v1.11.14) exposes no
+  single-branch flag, and goldfinger will not reimplement cloning, so this is
+  deferred pending an upstream ghorg option. For now: --clone-depth 1 (shallow,
+  default branch only) is the size lever; omit it for a full clone.
+
 SAFETY — READ THIS
   - `apply` defaults to --dry-run: it shows the planned change and opens NOTHING.
   - A real run needs BOTH --dry-run=false AND --confirm. This is deliberate.
@@ -224,6 +267,7 @@ MACHINE-READABLE OUTPUT
        goldfinger doctor --json       -> {version, checks:[{check, status, detail, fix}]}
        goldfinger check --json        -> {version, inSync, added, removed, …}
        goldfinger selections --json   -> {version, selections:[{name, owner, …}]}
+       goldfinger workspaces list --json -> {version, root, action, workspaces:[…]}
        goldfinger mirror --report-json -> {version, workspace, owner, repos, …}
        goldfinger apply --plan-json ... -> {version, dry_run, sign_mode, repos, …}
        goldfinger guide --json        -> {version, commands:[{name, flags, …}]}

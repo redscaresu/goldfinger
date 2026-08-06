@@ -673,6 +673,112 @@
       ],
       "title": "selections --json",
       "type": "object"
+    },
+    "workspace-manifest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The sidecar manifest mirror --purpose writes into each snapshot workspace, recording its purpose/branch/stamp/owner for workspaces to read.",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "stamp": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "purpose",
+        "stamp",
+        "owner",
+        "createdAt"
+      ],
+      "title": "workspace manifest (goldfinger-workspace.json)",
+      "type": "object"
+    },
+    "workspaces": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The snapshot-workspace listing workspaces list/prune emit under the workspace root.",
+      "properties": {
+        "action": {
+          "enum": [
+            "list",
+            "prune"
+          ],
+          "type": "string"
+        },
+        "pruned": {
+          "type": "boolean"
+        },
+        "root": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "workspaces": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "type": "string"
+              },
+              "createdAt": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "manifestPresent": {
+                "type": "boolean"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "sizeBytes": {
+                "type": "integer"
+              },
+              "stamp": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "sizeBytes",
+              "manifestPresent"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "version",
+        "root",
+        "action",
+        "pruned",
+        "workspaces"
+      ],
+      "title": "workspaces list/prune --json",
+      "type": "object"
     }
   }
 }

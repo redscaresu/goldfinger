@@ -108,7 +108,7 @@ func TestCapabilitiesListsExactlyTheRegisteredCommands(t *testing.T) {
 	// wrongly drops a real command, the ElementsMatch above would still pass (both
 	// sides share the filter), but this fixed set would catch the omission.
 	assert.ElementsMatch(t,
-		[]string{"select", "mirror", "apply", "check", "selections", "doctor", "guide", "schema"},
+		[]string{"select", "mirror", "apply", "check", "selections", "doctor", "guide", "schema", "workspaces"},
 		catalogued,
 		"the catalogue must list exactly goldfinger's own commands")
 }
@@ -294,7 +294,7 @@ func TestValidatorBackedNotesStayInSync(t *testing.T) {
 		{
 			name:    "mirror: --workspace xor --purpose",
 			command: "mirror",
-			guard:   func() error { _, err := resolveWorkspace("/ws", "audit", ""); return err },
+			guard:   func() error { _, _, err := resolveWorkspace("/ws", "audit", ""); return err },
 			must:    []string{"--workspace", "--purpose", "mutually exclusive"},
 		},
 		{

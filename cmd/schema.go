@@ -81,6 +81,12 @@ func buildSchemaCatalogue() schemaCatalogue {
 			"capabilities": schemaDoc("guide --json",
 				"The CLI-surface catalogue guide --json emits.",
 				capabilitiesSchemaObj()),
+			"workspaces": schemaDoc("workspaces list/prune --json",
+				"The snapshot-workspace listing workspaces list/prune emit under the workspace root.",
+				workspacesReportSchemaObj()),
+			"workspace-manifest": schemaDoc("workspace manifest (goldfinger-workspace.json)",
+				"The sidecar manifest mirror --purpose writes into each snapshot workspace, recording its purpose/branch/stamp/owner for workspaces to read.",
+				workspaceManifestSchemaObj()),
 		},
 	}
 }
@@ -339,4 +345,38 @@ func flagCapSchemaObj() map[string]any {
 		"values":   arrayOf(str()),
 		"default":  str(),
 	}, "name", "usage", "required")
+}
+
+func workspacesReportSchemaObj() map[string]any {
+	return object(map[string]any{
+		"version":    integer(),
+		"root":       str(),
+		"action":     enumStr(workspaceActionList, workspaceActionPrune),
+		"pruned":     boolean(),
+		"workspaces": arrayOf(workspaceInfoSchemaObj()),
+	}, "version", "root", "action", "pruned", "workspaces")
+}
+
+func workspaceInfoSchemaObj() map[string]any {
+	return object(map[string]any{
+		"path":            str(),
+		"purpose":         str(),
+		"branch":          str(),
+		"stamp":           str(),
+		"owner":           str(),
+		"sizeBytes":       integer(),
+		"createdAt":       dateTime(),
+		"manifestPresent": boolean(),
+	}, "path", "sizeBytes", "manifestPresent")
+}
+
+func workspaceManifestSchemaObj() map[string]any {
+	return object(map[string]any{
+		"version":   integer(),
+		"purpose":   str(),
+		"branch":    str(),
+		"stamp":     str(),
+		"owner":     str(),
+		"createdAt": dateTime(),
+	}, "version", "purpose", "stamp", "owner", "createdAt")
 }
