@@ -11,6 +11,14 @@ on:
 permissions:
   contents: read
 
+# Serialise runs for a given tag. The create-release guard is race-free within a
+# single run, but a re-run overlapping the original (same tag) could otherwise
+# have two runs each miss the release and both create/upload. Queue them instead
+# of cancelling — a release mid-publish must never be interrupted.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   # Opt JavaScript actions into Node 24 ahead of GitHub's deprecation of Node 20.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -39,9 +47,12 @@ jobs:
             echo "Release ${GITHUB_REF_NAME} already exists; leaving it in place."
             exit 0
           fi
+          # --verify-tag: fail loudly if the ref isn't a real tag rather than
+          # letting gh auto-create one from the default branch.
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
+            --verify-tag \
             --draft \
             --generate-notes
 
