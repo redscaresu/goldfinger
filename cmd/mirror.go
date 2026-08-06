@@ -58,7 +58,7 @@ func newMirrorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ws, err := resolveWorkspace(workspace, purpose, branch)
+			ws, snap, err := resolveWorkspace(workspace, purpose, branch)
 			if err != nil {
 				return err
 			}
@@ -76,13 +76,23 @@ func newMirrorCmd() *cobra.Command {
 			if err := verifyAndAnnouncePrincipal(cmd.Context(), cmd.ErrOrStderr(), token); err != nil {
 				return err
 			}
-			return runMirror(cmd.Context(), execRun, sel, ws, token, mirror.Options{
+			if err := runMirror(cmd.Context(), execRun, sel, ws, token, mirror.Options{
 				Branch:      branch,
 				Concurrency: concurrency,
 				CloneDepth:  cloneDepth,
 				NoClean:     noClean,
 				DryRun:      dryRun,
-			}, reportOptions{toStdout: reportJSON, toFile: writeReport}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}, reportOptions{toStdout: reportJSON, toFile: writeReport}, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+			// #29: drop a sidecar manifest in each --purpose snapshot so `workspaces
+			// list/prune` get reliable structured metadata (purpose/branch/stamp/
+			// owner) instead of parsing the ambiguous dir name. Owner is only known
+			// here, from the selection.
+			if snap != nil {
+				snap.Owner = sel.Owner
+			}
+			return writeSnapshotManifest(ws, snap, dryRun)
 		},
 	}
 	addSelectionFlags(cmd, &name, &selectionPath)
@@ -161,6 +171,19 @@ func emitMirrorReport(sel models.Selection, ws string, opts mirror.Options, repo
 	return nil
 }
 
+// writeSnapshotManifest persists the sidecar manifest for a --purpose snapshot
+// after a successful, non-dry-run mirror. It is a no-op for the persistent
+// default/--workspace case (snap == nil) and for a dry-run (which never creates a
+// workspace to write into) — mirroring emitMirrorReport's "only on a real,
+// successful mirror" posture, so no manifest is ever left describing a clone that
+// did not happen.
+func writeSnapshotManifest(ws string, snap *workspaceManifest, dryRun bool) error {
+	if snap == nil || dryRun {
+		return nil
+	}
+	return writeWorkspaceManifest(ws, *snap)
+}
+
 // nowFunc is the clock used to timestamp ephemeral --purpose workspaces. It is
 // a package var so tests can pin the time.
 var nowFunc = time.Now
@@ -176,39 +199,54 @@ var nowFunc = time.Now
 //     --workspace.
 //   - --workspace: used as given (made absolute).
 //   - neither: defaults to ~/goldfinger.
-func resolveWorkspace(workspace, purpose, branch string) (string, error) {
+//
+// For a --purpose snapshot it also returns a *workspaceManifest carrying the
+// snapshot's identity (purpose, branch, stamp, creation time) so the caller can
+// persist it after a successful mirror; Owner is left for the caller to fill from
+// the selection. The manifest is nil for the --workspace and default cases, which
+// are persistent workspaces, not managed snapshots.
+func resolveWorkspace(workspace, purpose, branch string) (string, *workspaceManifest, error) {
 	if workspace != "" && purpose != "" {
-		return "", errors.New("--workspace and --purpose are mutually exclusive")
+		return "", nil, errors.New("--workspace and --purpose are mutually exclusive")
 	}
 	if purpose != "" {
 		if err := validatePurpose(purpose); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("resolve home dir for workspace: %w", err)
+			return "", nil, fmt.Errorf("resolve home dir for workspace: %w", err)
 		}
+		now := nowFunc()
+		stamp := now.Format(stampLayout)
 		dir := purpose
 		if branch != "" {
 			// The real branch (with any slashes) still goes to ghorg; only the
 			// dir-name component is sanitised so it stays a single safe segment.
 			dir += "-" + sanitizeForDir(branch)
 		}
-		dir += "-" + nowFunc().Format("2006-01-02-150405.000")
-		return filepath.Join(home, "goldfinger", dir), nil
+		dir += "-" + stamp
+		snap := &workspaceManifest{
+			Version:   workspaceManifestVersion,
+			Purpose:   purpose,
+			Branch:    branch,
+			Stamp:     stamp,
+			CreatedAt: now,
+		}
+		return filepath.Join(home, "goldfinger", dir), snap, nil
 	}
 	if workspace == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("resolve home dir for workspace: %w", err)
+			return "", nil, fmt.Errorf("resolve home dir for workspace: %w", err)
 		}
-		return filepath.Join(home, "goldfinger"), nil
+		return filepath.Join(home, "goldfinger"), nil, nil
 	}
 	abs, err := filepath.Abs(workspace)
 	if err != nil {
-		return "", fmt.Errorf("resolve workspace path: %w", err)
+		return "", nil, fmt.Errorf("resolve workspace path: %w", err)
 	}
-	return abs, nil
+	return abs, nil, nil
 }
 
 // validatePurpose rejects anything that isn't a plain directory-name component,

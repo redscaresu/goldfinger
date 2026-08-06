@@ -16,12 +16,14 @@ import (
 // version (models.SelectionVersion). Bump a payload's constant only when its shape
 // changes incompatibly.
 const (
-	checkReportVersion      = 1
-	selectionsReportVersion = 1
-	mirrorReportVersion     = 1
-	applyPlanVersion        = 1
-	doctorReportVersion     = 1
-	schemaCatalogueVersion  = 1
+	checkReportVersion       = 1
+	selectionsReportVersion  = 1
+	mirrorReportVersion      = 1
+	applyPlanVersion         = 1
+	doctorReportVersion      = 1
+	schemaCatalogueVersion   = 1
+	workspacesReportVersion  = 1
+	workspaceManifestVersion = 1
 )
 
 // emitJSON writes v as indented JSON followed by a newline to w. It is the single

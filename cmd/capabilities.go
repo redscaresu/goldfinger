@@ -138,6 +138,15 @@ var curatedCapabilities = map[string]curatedCommand{
 		example: "goldfinger schema",
 		notes:   []string{"prints JSON Schema for the lockfile and every machine-readable payload; read-only and offline, needs no token, opens no network, runs no git"},
 	},
+	"workspaces": {
+		example: "goldfinger workspaces list",
+		notes: []string{
+			"takes one positional action: `list` (enumerate snapshots) or `prune` (remove them)",
+			"prune previews by default and deletes only with --confirm (apply's confirm posture); --older-than and --purpose narrow what it targets",
+			"--purpose matches only manifest-tagged snapshots whose recorded purpose is exactly that name; it never matches a snapshot without a goldfinger-workspace.json manifest (an unfiltered prune or --older-than still targets a manifest-less snapshot)",
+			"acts on snapshot dirs under the workspace root (default ~/goldfinger, override with --root) whose name ends in a -<timestamp> stamp; never touches GitHub and runs no git",
+		},
+	},
 }
 
 // buildCapabilities walks the root command tree and merges each command's

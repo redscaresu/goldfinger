@@ -18,31 +18,41 @@ import (
 )
 
 func TestResolveWorkspaceDefault(t *testing.T) {
-	ws, err := resolveWorkspace("", "", "")
+	ws, snap, err := resolveWorkspace("", "", "")
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(ws))
 	assert.True(t, strings.HasSuffix(ws, "goldfinger"))
+	assert.Nil(t, snap, "the default workspace is persistent, not a managed snapshot")
 }
 
 func TestResolveWorkspaceRelativeBecomesAbsolute(t *testing.T) {
-	ws, err := resolveWorkspace("some/dir", "", "")
+	ws, snap, err := resolveWorkspace("some/dir", "", "")
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(ws))
 	assert.True(t, strings.HasSuffix(ws, filepath.Join("some", "dir")))
+	assert.Nil(t, snap, "an explicit --workspace is not a managed snapshot")
 }
 
 func TestResolveWorkspacePurposeIsTimestamped(t *testing.T) {
 	orig := nowFunc
-	nowFunc = func() time.Time { return time.Date(2026, 8, 4, 13, 20, 45, 123000000, time.UTC) }
+	now := time.Date(2026, 8, 4, 13, 20, 45, 123000000, time.UTC)
+	nowFunc = func() time.Time { return now }
 	defer func() { nowFunc = orig }()
 
-	ws, err := resolveWorkspace("", "keyv-cve", "")
+	ws, snap, err := resolveWorkspace("", "keyv-cve", "")
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(ws))
 	// goldfinger stamps the time to the millisecond; the operator supplied only
 	// the purpose, so each run gets its own pristine dir.
 	assert.True(t, strings.HasSuffix(ws, filepath.Join("goldfinger", "keyv-cve-2026-08-04-132045.123")),
 		"want ~/goldfinger/keyv-cve-2026-08-04-132045.123, got %s", ws)
+	// A --purpose snapshot carries a manifest matching the stamped dir name (Owner
+	// is filled by the caller from the selection, so it is empty here).
+	require.NotNil(t, snap)
+	assert.Equal(t, workspaceManifest{
+		Version: workspaceManifestVersion, Purpose: "keyv-cve",
+		Stamp: "2026-08-04-132045.123", CreatedAt: now,
+	}, *snap)
 }
 
 func TestResolveWorkspacePurposeFoldsInBranch(t *testing.T) {
@@ -51,21 +61,25 @@ func TestResolveWorkspacePurposeFoldsInBranch(t *testing.T) {
 	defer func() { nowFunc = orig }()
 
 	// A branch with a slash must fold into a single safe path segment.
-	ws, err := resolveWorkspace("", "keyv-cve", "feature/x")
+	ws, snap, err := resolveWorkspace("", "keyv-cve", "feature/x")
 	require.NoError(t, err)
 	assert.True(t, strings.HasSuffix(ws, filepath.Join("goldfinger", "keyv-cve-feature-x-2026-08-04-132045.123")),
 		"want ~/goldfinger/keyv-cve-feature-x-2026-08-04-132045.123, got %s", ws)
+	// The manifest records the REAL branch (slashes intact), not the sanitised
+	// dir-name component — that is the reliability win of the sidecar.
+	require.NotNil(t, snap)
+	assert.Equal(t, "feature/x", snap.Branch)
 }
 
 func TestResolveWorkspacePurposeAndWorkspaceMutuallyExclusive(t *testing.T) {
-	_, err := resolveWorkspace("/some/ws", "keyv-cve", "")
+	_, _, err := resolveWorkspace("/some/ws", "keyv-cve", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mutually exclusive")
 }
 
 func TestResolveWorkspaceRejectsUnsafePurpose(t *testing.T) {
 	for _, p := range []string{"../etc", "a/b", "has space", "..", "with\\slash"} {
-		_, err := resolveWorkspace("", p, "")
+		_, _, err := resolveWorkspace("", p, "")
 		require.Error(t, err, "purpose %q should be rejected", p)
 		assert.Contains(t, err.Error(), "--purpose")
 	}
