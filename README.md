@@ -278,8 +278,16 @@ goldfinger mirror --purpose keyv-cve --branch dev
 # clones into ~/goldfinger/keyv-cve-dev-2026-08-04-132045.123/<owner>/
 ```
 
-goldfinger **never deletes** the directory — it persists so you can review it;
-remove it yourself when the campaign is done
+A `--purpose` mirror also drops a small sidecar manifest at the snapshot root
+(`goldfinger-workspace.json`, recording `purpose`, `branch`, `stamp`, `owner`,
+`createdAt` as separate fields) on a successful, non-dry-run mirror. It exists so
+`goldfinger workspaces list | prune` (below) get reliable structured metadata:
+the directory name alone can't be split back into its parts, because both the
+purpose and a sanitised branch can contain `-`.
+
+goldfinger **never deletes** the directory — it persists so you can review it.
+Reclaim old snapshots with [`goldfinger workspaces prune`](#goldfinger-workspaces)
+(preview-by-default, deletes only with `--confirm`), or just remove one yourself
 (`rm -rf ~/goldfinger/keyv-cve-2026-08-04-132045.123`). A fresh per-campaign clone is
 pristine by construction, so it sidesteps a trap
 long-lived clones fall into: if upstream rebases or squashes its default branch,
@@ -469,6 +477,55 @@ goldfinger apply  --name payments -- sed -i '…' Dockerfile
 `--name` and `--selection <path>` are mutually exclusive; re-running
 `select --name X` refreshes that cohort in place.
 
+### `goldfinger workspaces`
+
+Every `mirror --purpose` leaves a timestamped snapshot dir under the workspace
+root (default `~/goldfinger`), and goldfinger never deletes them on its own — so
+they accumulate. `workspaces` is the safe, first-class way to see and reclaim
+them. It is **filesystem-only**: it never touches GitHub and runs no git.
+
+```sh
+goldfinger workspaces list           # size + creation time per snapshot
+goldfinger workspaces list --json    # {version, root, action, workspaces:[…]}
+
+goldfinger workspaces prune                    # PREVIEW — shows what it would
+                                               # remove, deletes nothing
+goldfinger workspaces prune --confirm          # actually delete
+goldfinger workspaces prune --older-than 168h  # only snapshots older than 7d
+goldfinger workspaces prune --purpose keyv-cve # only that recorded purpose
+```
+
+`list` enumerates only the stamped snapshot dirs (those ending in `-<stamp>`);
+the default `~/goldfinger/<owner>` mirror and any unrelated directory are
+ignored. A snapshot's `purpose`/`branch`/`owner` come from its sidecar manifest
+(`goldfinger-workspace.json`) when present; a legacy manifest-less snapshot is
+still listed — `createdAt` is recovered from the dir-name stamp — but with no
+structured purpose/branch, because the directory name is **not** reliably
+splittable back into its parts.
+
+`prune` mirrors `apply`'s safety posture: it **previews by default and deletes
+only with `--confirm`** — it never removes a snapshot on its own initiative, and
+there is no time-based auto-GC. Narrow the target with `--older-than <dur>`
+and/or `--purpose <name>`; with no filter it targets every snapshot (still
+confirm-gated). Both filters are deliberately conservative:
+
+- `--purpose` matches **only** manifest-tagged snapshots whose recorded purpose
+  is *exactly* that name — a manifest-less snapshot is never matched by purpose.
+- `--older-than` skips any snapshot whose age can't be determined, so an
+  ambiguous snapshot is kept, not deleted.
+
+`prune` will only ever delete a stamp-suffixed directory that is a direct child
+of the root, re-checked immediately before each removal as defence in depth.
+`--older-than`/`--purpose`/`--confirm` apply to `prune` only; passing them to
+`list` is an error.
+
+> **Not yet: a `--single-branch` clone.** A single-branch, full-depth clone (one
+> branch, full history) would cut mirror size without the shallow-clone trap, but
+> [ghorg](https://github.com/gabrie30/ghorg) (as of v1.11.14) exposes no
+> single-branch flag and goldfinger will not reimplement cloning — so this is
+> **deferred pending an upstream ghorg option**. For now `--clone-depth 1`
+> (shallow, default branch only) is the size lever; omit it for a full clone.
+
 ### Machine-readable output (`--json`)
 
 Every read command emits structured JSON on request, following one contract:
@@ -482,10 +539,11 @@ to stderr — so an agent can parse stdout without stripping prose.
 | `doctor` | `--json` | `{version, checks:[{check, status, detail, fix?}]}` where `status` is `ok`/`info`/`warn`/`fail`. The token value is never included. See [`doctor`](#goldfinger-doctor). |
 | `check` | `--json` | `{version, name?, inSync, added, removed:[{repo,reason}], defaultBranchMoved:[{repo,from,to}], ownerTypeFlipped:{from,to}\|null}`. Exit code is unchanged (`0`/`1`/`2`). |
 | `selections` | `--json` | `{version, selections:[{name, path, owner, repoCount, resolvedAt}]}`; an unreadable entry carries an `error` field instead of being dropped; an empty registry is `selections: []`, not an error. |
+| `workspaces` | `--json` | `{version, root, action, pruned, workspaces:[{path, purpose?, branch?, stamp?, owner?, sizeBytes, createdAt?, manifestPresent}]}` — `list` reports every snapshot, `prune` the matched subset (`pruned:true` once `--confirm` deleted them). See [`workspaces`](#goldfinger-workspaces). |
 | `mirror` | `--report-json` | `{version, workspace, owner, repoCount, branch?, repos:[…]}` (see [`mirror`](#goldfinger-mirror)). |
 | `apply` | `--plan-json` | `{version, dry_run, sign_mode, branch, pr_title, commit_message, pr_body_present, labels, reviewers, draft, batch_size, batch_pause, command_program, command_redacted, base_branch_source, repos:[{repo, base_branch_recorded}], repos_total}` — the invocation goldfinger will make, **not** the diff. See [`apply`](#goldfinger-apply). |
 | `guide` | `--json` | `{version, commands:[{name, summary, requiredFlags, flags:[{name, usage, required, values?, default?}], example, notes?}]}` — a machine-consumable catalogue of the CLI surface, so an agent can discover every command, its flags, which are required, a flag's enum values, and a canonical example without parsing the prose playbook. Command names, flag names, and usage text are derived from the live command tree; requiredness, enum values, notes, and the example are curated and kept in sync with the validators by tests. |
-| `schema` | *(always JSON)* | `{version, schemas:{lockfile, select, check, selections, doctor, apply-plan, mirror-report, capabilities}}` — the [JSON Schema](https://json-schema.org/) (draft 2020-12) for the lockfile and every *other* payload in this table, so a consumer can **validate** goldfinger's output rather than infer its shape. Read-only and offline: no token, no network, no git. The schemas are hand-authored but pinned to the Go types by a golden test and a reflection test, so they cannot silently drift. Where `guide --json` describes the *input* surface, `schema` describes the *output* surface. |
+| `schema` | *(always JSON)* | `{version, schemas:{lockfile, select, check, selections, doctor, apply-plan, mirror-report, capabilities, workspaces, workspace-manifest}}` — the [JSON Schema](https://json-schema.org/) (draft 2020-12) for the lockfile and every *other* payload in this table, so a consumer can **validate** goldfinger's output rather than infer its shape. Read-only and offline: no token, no network, no git. The schemas are hand-authored but pinned to the Go types by a golden test and a reflection test, so they cannot silently drift. Where `guide --json` describes the *input* surface, `schema` describes the *output* surface. |
 
 Each payload carries an explicit top-level `version` so consumers can branch on
 shape across releases — the sole exception is `select --json`, whose version is
