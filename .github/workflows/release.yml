@@ -6,8 +6,8 @@ on:
       - 'v*'
 
 # Least-privilege default: read-only token for every job, with write granted
-# per-job only where a job actually mutates the release (upload assets). Keeps
-# the tap-push and smoke jobs from ever holding a write-capable GITHUB_TOKEN.
+# per-job only where a job actually mutates the release. Keeps the tap-push and
+# smoke jobs from ever holding a write-capable GITHUB_TOKEN.
 permissions:
   contents: read
 
@@ -16,7 +16,37 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # Create the release ONCE, before the build matrix fans out. This is the fix
+  # for a cold-start race: four matrix legs used to each "create-or-update" the
+  # release, but on a brand-new tag the release doesn't exist and the tag isn't
+  # yet API-discoverable, so multiple legs each CREATED a release — yielding
+  # duplicate release objects and an `already_exists` error on finalise.
+  # Serialising creation here means every downstream leg finds one shared
+  # release and only uploads to it. Created as a draft with auto-generated notes
+  # (the "What's Changed" changelog from the PRs merged since the last tag); the
+  # `publish` job flips it live only once all assets are attached, so a
+  # half-populated release is never visible as "Latest".
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the draft release for this tag
+    steps:
+      - name: Create draft release with generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; leaving it in place."
+            exit 0
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --draft \
+            --generate-notes
+
   build-and-release:
+    needs: create-release
     runs-on: ubuntu-latest
     permissions:
       contents: write # uploads the built binaries as release assets
@@ -57,20 +87,21 @@ jobs:
           (cd dist && sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256")
 
       - name: Upload binary to release
-        # zizmor: ignore[superfluous-actions]
-        # Kept deliberately over `gh release upload`: four matrix legs race to
-        # attach assets to the same release, and this action creates-or-updates
-        # idempotently. Pinned to a commit SHA, so the supply-chain risk is bounded.
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          files: |
-            dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }}
-            dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+        # Each leg uploads its own two distinct filenames to the release the
+        # create-release job already made, so there is no create path to race on
+        # and no cross-leg filename collision. --clobber makes a re-run idempotent.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }}" \
+            "dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }}.sha256" \
+            --repo "${GITHUB_REPOSITORY}" --clobber
 
   # Combine the per-binary checksums into one SHA256SUMS manifest. Each matrix
   # leg builds in isolation, so it can only see its own binary — this job waits
   # for all four, pulls their .sha256 assets back off the release, concatenates
-  # them, and attaches the manifest README's `shasum -a 256 -c SHA256SUMS`
+  # them, and attaches the manifest the README's `shasum -a 256 -c SHA256SUMS`
   # verify step expects.
   checksums:
     needs: build-and-release
@@ -91,11 +122,29 @@ jobs:
           (cd dist && cat *.sha256 | sort -k2 > SHA256SUMS)
 
       - name: Upload SHA256SUMS to release
-        # zizmor: ignore[superfluous-actions]
-        # Same create-or-update rationale as the binary upload; SHA-pinned.
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          files: dist/SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            dist/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+
+  # Flip the draft release live only after every binary and the SHA256SUMS
+  # manifest are attached, so consumers (and Homebrew) never see a partial
+  # release marked "Latest".
+  publish:
+    needs: checksums
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # publishes the release
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false --latest
 
   # Bump the Homebrew tap so `brew install redscaresu/tap/goldfinger` tracks this
   # release. Self-gating: with no HOMEBREW_TAP_TOKEN secret set the step logs a
@@ -103,7 +152,7 @@ jobs:
   # create the redscaresu/homebrew-tap repo and add a HOMEBREW_TAP_TOKEN secret
   # (a token with contents:write on that repo).
   homebrew:
-    needs: build-and-release
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: read # only reads release assets; the tap push uses TAP_TOKEN
