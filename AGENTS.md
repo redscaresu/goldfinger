@@ -20,9 +20,7 @@ this file, so Claude Code reads exactly the same content — one source of truth
   `--clone-depth` when mirroring a non-default branch. Full recipe in
   `goldfinger guide`.
 - **Changing goldfinger's code** (you are here): read `README.md` first for the
-  product design and rationale, then follow the rules below and the build plan in
-  `IMPLEMENTATION.md` — start at its "Start here" section; its pinned decisions
-  and scope fences are binding.
+  product design and rationale, then follow the rules below.
 
 ## What goldfinger is
 
