@@ -14,7 +14,7 @@ import (
 )
 
 // tokenEnv is the environment variable ghorg reads its GitHub PAT from.
-const tokenEnv = "GHORG_GITHUB_TOKEN"
+const tokenEnv = "GHORG_GITHUB_TOKEN" //nolint:gosec // G101: this is the name of an env var, not a hardcoded credential.
 
 // ambientGhorgEnv lists GHORG_* environment variables that would let host config
 // silently change which repos get mirrored — by filtering the target set
@@ -182,15 +182,15 @@ func writeNamesFile(repos []models.Repo) (path string, cleanup func(), err error
 		b.WriteByte('\n')
 	}
 	if _, err := f.WriteString(b.String()); err != nil {
-		f.Close()
-		os.Remove(f.Name())
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return "", nil, fmt.Errorf("write names file: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name())
 		return "", nil, fmt.Errorf("close names file: %w", err)
 	}
-	return f.Name(), func() { os.Remove(f.Name()) }, nil
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
 }
 
 // writeEmptyFile creates an empty temp file matching pattern and returns its
@@ -202,8 +202,8 @@ func writeEmptyFile(pattern string) (path string, cleanup func(), err error) {
 		return "", nil, fmt.Errorf("create temp file: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name())
 		return "", nil, fmt.Errorf("close temp file: %w", err)
 	}
-	return f.Name(), func() { os.Remove(f.Name()) }, nil
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
 }

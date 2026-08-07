@@ -27,13 +27,17 @@ func Write(path string, s models.Selection) error {
 	data = append(data, '\n')
 
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		// 0750 applies only when MkdirAll creates the dir; a pre-existing
+		// selections dir keeps its mode. We deliberately don't chmod it back —
+		// the operator owns that directory and its metadata isn't secret; the
+		// lockfile itself is written 0600 below via the temp+rename.
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create selection dir: %w", err)
 		}
 	}
 
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write selection: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -44,7 +48,7 @@ func Write(path string, s models.Selection) error {
 
 // Read loads and validates the selection lockfile at path.
 func Read(path string) (models.Selection, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is the selection lockfile location goldfinger resolves (a named selection under its config dir or an explicit --selection path); reading the operator's own lockfile is the point.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return models.Selection{}, fmt.Errorf("no selection at %s — run `goldfinger select` first", path)

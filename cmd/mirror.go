@@ -163,8 +163,14 @@ func emitMirrorReport(sel models.Selection, ws string, opts mirror.Options, repo
 	}
 	if report.toFile {
 		path := filepath.Join(ws, mirrorReportName)
-		if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 			return fmt.Errorf("write mirror report: %w", err)
+		}
+		// WriteFile only applies the mode when creating the file, so a re-mirror
+		// over a report left 0644 by an older goldfinger would keep the looser
+		// mode; chmod makes 0600 hold on rewrite too.
+		if err := os.Chmod(path, 0o600); err != nil {
+			return fmt.Errorf("secure mirror report perms: %w", err)
 		}
 		done(errOut, "report written to "+path)
 	}
