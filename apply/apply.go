@@ -15,7 +15,7 @@ import (
 )
 
 // tokenEnv is the environment variable multi-gitter reads its GitHub PAT from.
-const tokenEnv = "GITHUB_TOKEN"
+const tokenEnv = "GITHUB_TOKEN" //nolint:gosec // G101: this is the name of an env var, not a hardcoded credential.
 
 // sleep pauses between batches. It is a package var so tests can stub it and not
 // actually wait.
@@ -191,21 +191,21 @@ func writeScript(cmd []string) (path string, cleanup func(), err error) {
 	}
 	content := "#!/bin/sh\nexec " + strings.Join(quoted, " ") + "\n"
 	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		os.Remove(f.Name())
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return "", nil, fmt.Errorf("write script: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name())
 		return "", nil, fmt.Errorf("close script: %w", err)
 	}
 	// 0700, not 0755: the script embeds the user's command, which may carry
 	// sensitive paths — only the invoking user needs to read or execute it.
-	if err := os.Chmod(f.Name(), 0o700); err != nil {
-		os.Remove(f.Name())
+	if err := os.Chmod(f.Name(), 0o700); err != nil { //nolint:gosec // G302: the script must be executable (multi-gitter runs it), so 0700 is the minimum; it stays owner-only, never group/world.
+		_ = os.Remove(f.Name())
 		return "", nil, fmt.Errorf("chmod script: %w", err)
 	}
-	return f.Name(), func() { os.Remove(f.Name()) }, nil
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
 }
 
 // writeEmptyFile creates an empty temp file matching pattern and returns its
@@ -217,10 +217,10 @@ func writeEmptyFile(pattern string) (path string, cleanup func(), err error) {
 		return "", nil, fmt.Errorf("create temp file: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name())
 		return "", nil, fmt.Errorf("close temp file: %w", err)
 	}
-	return f.Name(), func() { os.Remove(f.Name()) }, nil
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
 }
 
 // shellQuote single-quotes a token so it survives POSIX sh word-splitting.

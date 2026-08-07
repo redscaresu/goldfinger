@@ -203,7 +203,7 @@ func resolvePRBody(inline, path string) (string, error) {
 	if inline != "" {
 		return "", errors.New("--pr-body and --pr-body-file are mutually exclusive")
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // G304: path is the operator's own --pr-body-file argument, read to compose their PR body; reading a caller-named local file is the point.
 	if err != nil {
 		return "", fmt.Errorf("reading --pr-body-file: %w", err)
 	}

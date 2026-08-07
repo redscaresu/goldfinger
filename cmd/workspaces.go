@@ -339,7 +339,7 @@ func describeWorkspace(path, stamp string) (workspaceInfo, error) {
 // legacy snapshot created before manifests, or a hand-made directory, is still a
 // valid thing to list and prune — just without structured metadata.
 func readWorkspaceManifest(dir string) (workspaceManifest, bool) {
-	data, err := os.ReadFile(filepath.Join(dir, workspaceManifestName))
+	data, err := os.ReadFile(filepath.Join(dir, workspaceManifestName)) //nolint:gosec // G304: dir is a mirror-workspace directory goldfinger is listing/pruning; reading its own manifest from a path it just walked is the intended behaviour.
 	if err != nil {
 		return workspaceManifest{}, false
 	}
@@ -462,7 +462,7 @@ func writeWorkspaceManifest(ws string, m workspaceManifest) error {
 	if err != nil {
 		return fmt.Errorf("render workspace manifest: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(ws, workspaceManifestName), append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ws, workspaceManifestName), append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("write workspace manifest: %w", err)
 	}
 	return nil

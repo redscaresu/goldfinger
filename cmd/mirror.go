@@ -163,7 +163,7 @@ func emitMirrorReport(sel models.Selection, ws string, opts mirror.Options, repo
 	}
 	if report.toFile {
 		path := filepath.Join(ws, mirrorReportName)
-		if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 			return fmt.Errorf("write mirror report: %w", err)
 		}
 		done(errOut, "report written to "+path)
