@@ -12,10 +12,9 @@ import (
 )
 
 // securityTest marks a test (or fuzz target) as one that locks a security
-// invariant of goldfinger — the same invariants enumerated in SECURITY.md's
-// audit map. It is a no-op at runtime; its only purpose is discoverability, so
-// an auditor can list every security invariant test without trusting a curated
-// list:
+// invariant of goldfinger. It is a no-op at runtime; its only purpose is
+// discoverability, so an auditor can list every security invariant test without
+// trusting a curated list:
 //
 //	grep -rln 'securityTest(' --include='*_test.go'
 //
@@ -60,10 +59,11 @@ const maxFuzzToken = 4096
 // (`-fuzz`) generates unconstrained mutations, so IF shellQuote ever regressed a
 // mutation could get a command substitution past the quotes. To keep that from
 // touching anything real, each script runs with an emptied environment (`PATH=`
-// so bareword commands don't resolve) and both HOME and the working directory
-// pointed at a throwaway temp dir, under a hard timeout so a hang can't wedge the
-// run. Absolute-path payloads remain theoretically possible after such a
-// regression, so run active fuzzing in a disposable environment.
+// so no external command resolves by name — shell builtins like echo still run,
+// but they touch nothing outside the sandbox) and both HOME and the working
+// directory pointed at a throwaway temp dir, under a hard timeout so a hang can't
+// wedge the run. A payload naming an absolute path (`/bin/rm …`) remains possible
+// after such a regression, so run active fuzzing in a disposable environment.
 func FuzzShellQuote(f *testing.F) {
 	seeds := []string{
 		"",
@@ -110,8 +110,9 @@ func FuzzShellQuote(f *testing.F) {
 		defer cleanup()
 
 		// Contain the blast radius if a future shellQuote regression let a fuzzed
-		// input escape: no PATH (bareword commands don't resolve), HOME and CWD in
-		// a throwaway dir, and a hard timeout against hangs.
+		// input escape: no PATH (no external command resolves by name; builtins
+		// still run but touch nothing outside the sandbox), HOME and CWD in a
+		// throwaway dir, and a hard timeout against hangs.
 		sandbox := t.TempDir()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
