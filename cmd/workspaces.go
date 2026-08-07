@@ -462,8 +462,15 @@ func writeWorkspaceManifest(ws string, m workspaceManifest) error {
 	if err != nil {
 		return fmt.Errorf("render workspace manifest: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(ws, workspaceManifestName), append(data, '\n'), 0o600); err != nil {
+	path := filepath.Join(ws, workspaceManifestName)
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("write workspace manifest: %w", err)
+	}
+	// WriteFile only applies the mode on creation, so rewriting a manifest left
+	// 0644 by an older goldfinger would keep the looser mode; chmod makes 0600
+	// hold on rewrite too.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("secure workspace manifest perms: %w", err)
 	}
 	return nil
 }

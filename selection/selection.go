@@ -27,6 +27,10 @@ func Write(path string, s models.Selection) error {
 	data = append(data, '\n')
 
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		// 0750 applies only when MkdirAll creates the dir; a pre-existing
+		// selections dir keeps its mode. We deliberately don't chmod it back —
+		// the operator owns that directory and its metadata isn't secret; the
+		// lockfile itself is written 0600 below via the temp+rename.
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create selection dir: %w", err)
 		}
