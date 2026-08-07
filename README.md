@@ -612,6 +612,46 @@ name; rename to `goldfinger` only on the final `mv` (the one-line installer abov
 does all of this for you). Browse builds at
 [Releases](https://github.com/redscaresu/goldfinger/releases).
 
+### Verify a release is built from this source (reproducible build)
+
+The checksum above proves you downloaded exactly what the release *published*. It
+does **not** prove that binary was built from the source in this repo. Because
+the release build is deterministic — `CGO_ENABLED=0`, `-trimpath`, a fixed
+`-ldflags`, and the Go toolchain pinned by go.mod's `go` directive — you can
+close that gap yourself: rebuild the tag from source and confirm the hash
+matches, trusting no build machine.
+
+```sh
+git clone https://github.com/redscaresu/goldfinger && cd goldfinger
+git checkout <tag>             # the released tag — build from a CLEAN tree at this commit
+make repro VERSION=<tag>       # rebuilds dist/goldfinger-<os>-<arch> and prints its sha256
+```
+
+The `repro` target ships from this change onward, so use a tag that includes it
+(the first release after it landed, or later); older tags don't carry the target.
+
+`make repro` uses the same toolchain and flags as the release build and clears
+the ambient Go env that would otherwise change the bytes (`GOFLAGS`, `GOWORK`,
+`GOEXPERIMENT`, `GOAMD64`), so on a standard Go install the only inputs are the
+tag's source and the pinned toolchain. It forces that toolchain via
+`GOTOOLCHAIN`, fetching it if your local Go differs — provided your bootstrap Go
+is recent enough to support toolchain switching (Go 1.21+); an older one errors
+out rather than fetching, so upgrade Go first. Compare its printed hash-and-name
+line against the release's `goldfinger-<os>-<arch>.sha256` (or the line in
+`SHA256SUMS`) — they match bit-for-bit. To verify a platform other than your
+host, cross-build it:
+
+```sh
+make repro VERSION=<tag> GOOS=linux GOARCH=amd64
+```
+
+Two requirements make the hash reproduce: build from a **clean checkout of the
+tag's commit** (the binary embeds the git revision, commit time, and a
+clean/dirty flag — a modified tree or a different commit changes the bytes), and
+let `make repro` pick the toolchain (don't override `GOTOOLCHAIN`). This proves
+the published binary was built from this source; it is the source-trust
+complement to the download checksum above.
+
 Or install from source with Go:
 
 ```sh
