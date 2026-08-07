@@ -49,15 +49,21 @@ check: build test lint
 # must match the released tag exactly — it is baked into the binary via
 # -ldflags -X main.version, and the embedded VCS stamp means you must run this
 # from a CLEAN checkout of that tag's commit (see README "Verify a release").
+# The build line also neutralises ambient Go env that would otherwise change the
+# bytes and diverge from the release runner's defaults: GOFLAGS= (e.g. a stray
+# -buildvcs=false would drop the VCS stamp), GOWORK=off (a go.work would swap
+# deps), GOEXPERIMENT= (reset to the toolchain default set), GOAMD64=v1 (the
+# release default; ignored off-amd64).
 repro:
 	@[ -n "$(VERSION)" ] || { echo 'VERSION is required and must match the released tag exactly, e.g. make repro VERSION=v0.5.0'; exit 1; }
 	@mkdir -p dist
-	GOTOOLCHAIN=$(REPRO_TOOLCHAIN) CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+	GOFLAGS= GOWORK=off GOEXPERIMENT= GOAMD64=v1 \
+		GOTOOLCHAIN=$(REPRO_TOOLCHAIN) CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		$(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o "$(REPRO_BIN)" ./cmd
 	@echo
 	@echo "Rebuilt $(REPRO_BIN)  (version $(VERSION), toolchain $(REPRO_TOOLCHAIN))"
-	@$(SHA256SUM) "$(REPRO_BIN)"
-	@echo "Compare the hash above with goldfinger-$(GOOS)-$(GOARCH).sha256 from the $(VERSION) release (or its line in SHA256SUMS)."
+	@cd dist && $(SHA256SUM) "goldfinger-$(GOOS)-$(GOARCH)"
+	@echo "The line above matches goldfinger-$(GOOS)-$(GOARCH).sha256 from the $(VERSION) release (and its line in SHA256SUMS) hash-and-filename."
 
 e2e:
 	./scripts/e2e.sh
