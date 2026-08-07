@@ -98,6 +98,7 @@ func newApplyCmd() *cobra.Command {
 				Reviewers:     reviewers,
 				Draft:         draft,
 				DryRun:        dryRun,
+				Confirm:       confirm,
 				Script:        script,
 				Sign:          sign,
 				BatchSize:     batchSize,

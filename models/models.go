@@ -81,6 +81,35 @@ const (
 	SignNone = "none"
 )
 
+// validSignModes is the canonical set of accepted signing modes and the single
+// source of truth: cmd's --sign validator and the guide --json catalogue (via
+// SignModes) and apply.Apply's execution-boundary guard (via IsValidSignMode)
+// all derive from it, so no layer can drift from another. It is unexported so no
+// other package can mutate the list the safety guard trusts — an exported slice
+// could be appended to (e.g. add "") to defeat the check. There is deliberately
+// no default: a run must name a mode.
+var validSignModes = []string{SignLocal, SignGitHub, SignNone}
+
+// SignModes returns a fresh copy of the accepted signing modes, for callers that
+// need to enumerate them (the CLI validator and the guide --json catalogue). A
+// copy, so a caller holding the result cannot mutate the canonical list.
+func SignModes() []string {
+	out := make([]string, len(validSignModes))
+	copy(out, validSignModes)
+	return out
+}
+
+// IsValidSignMode reports whether mode is a recognised signing mode. It reads the
+// unexported canonical list, so its verdict cannot be altered by another package.
+func IsValidSignMode(mode string) bool {
+	for _, m := range validSignModes {
+		if mode == m {
+			return true
+		}
+	}
+	return false
+}
+
 // ApplySpec is the change to run across a selection via multi-gitter. It is
 // assembled in cmd/ from flags.
 type ApplySpec struct {
@@ -93,7 +122,15 @@ type ApplySpec struct {
 	Reviewers     []string
 	Draft         bool
 	DryRun        bool
-	Script        []string // the command to run in each repo, e.g. ["sed", "-i", ...]
+
+	// Confirm authorizes a live (non-dry-run) apply that opens PRs. apply.Apply
+	// refuses a run with DryRun=false && Confirm=false, so the charter invariant
+	// "a real run needs an explicit confirmation" holds at the execution boundary
+	// even for a caller that bypasses the Cobra --confirm flag (e.g. a future MCP
+	// adapter), not just in cmd/.
+	Confirm bool
+
+	Script []string // the command to run in each repo, e.g. ["sed", "-i", ...]
 
 	// Sign selects how commits are signed: SignLocal (the operator's own GPG key
 	// via the git binary), SignGitHub (GitHub's web-flow key via the API), or

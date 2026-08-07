@@ -50,7 +50,7 @@ func TestValidateApply(t *testing.T) {
 
 func TestRunApply(t *testing.T) {
 	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a"}}}
-	spec := models.ApplySpec{Branch: "b", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true}
+	spec := models.ApplySpec{Branch: "b", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
 
 	t.Run("dry-run frames and delegates", func(t *testing.T) {
 		var gotArgs []string
@@ -67,6 +67,7 @@ func TestRunApply(t *testing.T) {
 	t.Run("live mode banner", func(t *testing.T) {
 		live := spec
 		live.DryRun = false
+		live.Confirm = true // Apply refuses a live run that isn't confirmed
 		var errOut bytes.Buffer
 		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
 		require.NoError(t, runApply(context.Background(), run, sel, live, "tok", false, io.Discard, &errOut))
@@ -168,7 +169,7 @@ func TestRunApplyPrintsPerRepoBase(t *testing.T) {
 	run := func(_ context.Context, _ string, _, _ []string) error { return nil }
 
 	t.Run("routes each repo to its own default branch", func(t *testing.T) {
-		spec := models.ApplySpec{Branch: "x", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true}
+		spec := models.ApplySpec{Branch: "x", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
 		var errOut bytes.Buffer
 		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut))
 		assert.Contains(t, errOut.String(), "acme/a -> main")
@@ -176,7 +177,7 @@ func TestRunApplyPrintsPerRepoBase(t *testing.T) {
 	})
 
 	t.Run("global base-branch overrides every repo", func(t *testing.T) {
-		spec := models.ApplySpec{Branch: "x", BaseBranch: "release", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true}
+		spec := models.ApplySpec{Branch: "x", BaseBranch: "release", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
 		var errOut bytes.Buffer
 		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut))
 		assert.Contains(t, errOut.String(), "acme/a -> release")
