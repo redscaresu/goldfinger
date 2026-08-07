@@ -49,6 +49,7 @@ func (c *capture) run(_ context.Context, name string, args, env []string) error 
 }
 
 func TestApplyInvocation(t *testing.T) {
+	securityTest(t) // locks the no-token-in-argv invariant (see final assertions)
 	var cap capture
 	spec := baseSpec()
 	spec.PRBody = "details"
@@ -129,6 +130,7 @@ func TestApplyNoDryRunOmitsFlag(t *testing.T) {
 // that constructs an ApplySpec directly (e.g. a future MCP adapter) cannot open
 // PRs by omitting confirmation. failRunner asserts multi-gitter is never invoked.
 func TestApplyRefusesUnconfirmedLiveRun(t *testing.T) {
+	securityTest(t)
 	spec := baseSpec()
 	spec.DryRun = false
 	spec.Confirm = false
@@ -142,6 +144,7 @@ func TestApplyRefusesUnconfirmedLiveRun(t *testing.T) {
 // a dry run — so apply.Apply can never fall through to unsigned commits for an
 // empty/unknown mode, which the bare multi-gitter default would produce.
 func TestApplyRequiresValidSignMode(t *testing.T) {
+	securityTest(t)
 	for _, mode := range []string{"", "bogus"} {
 		name := mode
 		if name == "" {
@@ -187,6 +190,7 @@ func TestApplyTooManyRepos(t *testing.T) {
 }
 
 func TestApplyOverridesExistingToken(t *testing.T) {
+	securityTest(t)
 	t.Setenv(tokenEnv, "runner-default-token") // e.g. CI's own GITHUB_TOKEN
 	var cap capture
 	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "our-token"))
@@ -202,6 +206,7 @@ func TestApplyOverridesExistingToken(t *testing.T) {
 }
 
 func TestApplyStripsSourcePATFromChildEnv(t *testing.T) {
+	securityTest(t)
 	t.Setenv(models.TokenEnvVar, "raw-pat") // operator's exported GOLD_FINGER_PAT
 	var cap capture
 	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "mapped-token"))
@@ -214,6 +219,7 @@ func TestApplyStripsSourcePATFromChildEnv(t *testing.T) {
 }
 
 func TestApplyPinsEmptyConfig(t *testing.T) {
+	securityTest(t)
 	// multi-gitter is pointed at a goldfinger-owned empty config so host config
 	// discovery can't override the lockfile selection. The file must exist at
 	// call time and be cleaned up afterwards.
@@ -381,6 +387,7 @@ func TestChunk(t *testing.T) {
 }
 
 func TestShellQuoteEscapesSingleQuote(t *testing.T) {
+	securityTest(t)
 	assert.Equal(t, `'it'\''s'`, shellQuote("it's"))
 }
 
