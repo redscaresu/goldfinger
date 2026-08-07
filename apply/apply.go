@@ -33,6 +33,21 @@ type Runner func(ctx context.Context, name string, args, env []string) error
 // Apply runs spec's script across exactly the repos in s via multi-gitter. The
 // token is passed through the child environment, never argv.
 func Apply(ctx context.Context, run Runner, s models.Selection, spec models.ApplySpec, token string) error {
+	// Enforce the two charter invariants here, at the lowest exported execution
+	// boundary — before writing the user script or invoking multi-gitter — so a
+	// caller that bypasses the Cobra layer (e.g. a future MCP adapter calling
+	// apply.Apply directly) cannot open PRs unconfirmed or unsigned. cmd/ still
+	// guards these earlier for a friendlier CLI error; this is the backstop.
+	//
+	// (a) A live run (opens PRs) must be explicitly confirmed.
+	if !spec.DryRun && !spec.Confirm {
+		return errors.New("refusing a live apply: DryRun is false but Confirm is false — a real run that opens PRs must be explicitly confirmed")
+	}
+	// (b) Every run must name a recognised signing mode — there is no default.
+	if !models.IsValidSignMode(spec.Sign) {
+		return fmt.Errorf("invalid signing mode %q: must be one of %s (your GPG key), %s (GitHub-verified), or %s (unsigned)", spec.Sign, models.SignLocal, models.SignGitHub, models.SignNone)
+	}
+
 	if len(s.Repos) == 0 {
 		return errors.New("selection is empty — nothing to apply")
 	}
@@ -133,9 +148,9 @@ func buildArgs(s models.Selection, spec models.ApplySpec, scriptPath, configPath
 	return args
 }
 
-// signArgs maps a signing mode onto the multi-gitter flag that produces it. An
-// unrecognised mode (including SignNone) adds nothing — cmd/ validates the value
-// up front, so the default here is the safe unsigned path.
+// signArgs maps a signing mode onto the multi-gitter flag that produces it.
+// Apply rejects any unrecognised mode before this is reached, so the only mode
+// that falls through to the default is SignNone — the intentional unsigned path.
 func signArgs(mode string) []string {
 	switch mode {
 	case models.SignGitHub:

@@ -69,11 +69,12 @@ func validateApply(av applyValidation) error {
 	return nil
 }
 
-// validSignModes is the single source of truth for --sign's accepted values. Both
-// the validator (validateSign) and the guide --json catalogue (curatedCapabilities)
-// read it, so the advertised enum can never drift from what the code accepts: add
-// a mode here and both the validator and the catalogue gain it together.
-var validSignModes = []string{models.SignLocal, models.SignGitHub, models.SignNone}
+// validSignModes is the accepted --sign values, a copy of the canonical set
+// owned by models (models.SignModes) — the single source of truth shared with
+// apply.Apply's execution-boundary guard (models.IsValidSignMode) — so the
+// validator, the guide --json catalogue (curatedCapabilities), and the apply
+// primitive can never drift: add a mode in models and all three gain it together.
+var validSignModes = models.SignModes()
 
 // validateSign enforces that --sign is set to a known mode. There is no default:
 // a real run must declare its signing intent explicitly.

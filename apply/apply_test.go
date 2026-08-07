@@ -31,6 +31,9 @@ func baseSpec() models.ApplySpec {
 		PRTitle:       "Bump image",
 		Script:        []string{"sed", "-i", "s|a|b|", "Dockerfile"},
 		DryRun:        true,
+		// Apply now guards that every run names a signing mode; SignNone adds no
+		// multi-gitter flag, so it keeps the arg assertions below unchanged.
+		Sign: models.SignNone,
 	}
 }
 
@@ -115,8 +118,56 @@ func TestApplyNoDryRunOmitsFlag(t *testing.T) {
 	var cap capture
 	spec := baseSpec()
 	spec.DryRun = false
+	spec.Confirm = true // a live run must be explicitly confirmed at the boundary
 	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t"))
 	assert.NotContains(t, cap.args, "--dry-run")
+}
+
+// TestApplyRefusesUnconfirmedLiveRun locks charter invariant (a) at the
+// execution boundary: a non-dry-run apply that isn't confirmed must be refused
+// by apply.Apply itself — not only by the Cobra --confirm flag — so a caller
+// that constructs an ApplySpec directly (e.g. a future MCP adapter) cannot open
+// PRs by omitting confirmation. failRunner asserts multi-gitter is never invoked.
+func TestApplyRefusesUnconfirmedLiveRun(t *testing.T) {
+	spec := baseSpec()
+	spec.DryRun = false
+	spec.Confirm = false
+	err := Apply(context.Background(), failRunner(t), twoRepoSelection(), spec, "t")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Confirm")
+}
+
+// TestApplyRequiresValidSignMode locks charter invariant (b): every run must
+// name a recognised signing mode. The check is unconditional — asserted here on
+// a dry run — so apply.Apply can never fall through to unsigned commits for an
+// empty/unknown mode, which the bare multi-gitter default would produce.
+func TestApplyRequiresValidSignMode(t *testing.T) {
+	for _, mode := range []string{"", "bogus"} {
+		name := mode
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			spec := baseSpec() // dry-run: proves --sign is required on every run, not just live
+			spec.Sign = mode
+			err := Apply(context.Background(), failRunner(t), twoRepoSelection(), spec, "t")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "signing mode")
+		})
+	}
+}
+
+// TestApplyAllowsConfirmedSignedLiveRun is the positive counterpart: a live run
+// that is both confirmed and signed passes the guards and delegates normally.
+func TestApplyAllowsConfirmedSignedLiveRun(t *testing.T) {
+	var cap capture
+	spec := baseSpec()
+	spec.DryRun = false
+	spec.Confirm = true
+	spec.Sign = models.SignLocal
+	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t"))
+	assert.Equal(t, "multi-gitter", cap.name)
+	assert.Contains(t, cap.args, "--git-type=cmd")
 }
 
 func TestApplyEmptySelection(t *testing.T) {
