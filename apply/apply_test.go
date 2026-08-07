@@ -332,6 +332,7 @@ func TestApplyBatchErrorReportsBatchNumber(t *testing.T) {
 }
 
 func TestApplySignModeArgs(t *testing.T) {
+	securityTest(t)
 	tests := []struct {
 		mode      string
 		wantArg   string   // the flag that must be present ("" = none of the below)
@@ -365,6 +366,7 @@ func TestApplySignModeArgs(t *testing.T) {
 // change adds author flags to buildArgs, this fails loudly rather than shipping
 // silently-unsigned commits under --sign=local.
 func TestApplyLocalSignPassesNoAuthorFlags(t *testing.T) {
+	securityTest(t)
 	var cap capture
 	spec := baseSpec()
 	spec.Sign = models.SignLocal
