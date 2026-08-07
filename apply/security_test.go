@@ -14,9 +14,10 @@ import (
 // securityTest marks a test (or fuzz target) as one that locks a security
 // invariant of goldfinger. It is a no-op at runtime; its only purpose is
 // discoverability, so an auditor can list every security invariant test without
-// trusting a curated list:
+// trusting a curated list — grep the call sites (not the two `func securityTest`
+// definitions):
 //
-//	grep -rln 'securityTest(' --include='*_test.go'
+//	grep -rn 'securityTest(t)' --include='*_test.go'
 //
 // Run just them:
 //
@@ -59,11 +60,12 @@ const maxFuzzToken = 4096
 // (`-fuzz`) generates unconstrained mutations, so IF shellQuote ever regressed a
 // mutation could get a command substitution past the quotes. To keep that from
 // touching anything real, each script runs with an emptied environment (`PATH=`
-// so no external command resolves by name — shell builtins like echo still run,
-// but they touch nothing outside the sandbox) and both HOME and the working
-// directory pointed at a throwaway temp dir, under a hard timeout so a hang can't
-// wedge the run. A payload naming an absolute path (`/bin/rm …`) remains possible
-// after such a regression, so run active fuzzing in a disposable environment.
+// only narrows ordinary PATH lookup — it does NOT sandbox: shell builtins like
+// `kill`, `command -p`, and redirections to absolute paths can still reach
+// outside), HOME and the working directory pointed at a throwaway temp dir, and a
+// hard timeout so a hang can't wedge the run. Those reduce incidental damage but
+// are not containment; the real guarantee is procedural — run active fuzzing in a
+// disposable environment (throwaway VM/container), never on a real host.
 func FuzzShellQuote(f *testing.F) {
 	seeds := []string{
 		"",
@@ -109,10 +111,11 @@ func FuzzShellQuote(f *testing.F) {
 		require.NoError(t, err)
 		defer cleanup()
 
-		// Contain the blast radius if a future shellQuote regression let a fuzzed
-		// input escape: no PATH (no external command resolves by name; builtins
-		// still run but touch nothing outside the sandbox), HOME and CWD in a
-		// throwaway dir, and a hard timeout against hangs.
+		// Reduce incidental blast radius if a future shellQuote regression let a
+		// fuzzed input escape: PATH= (narrows ordinary command lookup only — not a
+		// sandbox; builtins/`command -p`/absolute-path redirections still reach
+		// out), HOME and CWD in a throwaway dir, and a hard timeout against hangs.
+		// Real containment is procedural: run -fuzz in a disposable environment.
 		sandbox := t.TempDir()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
