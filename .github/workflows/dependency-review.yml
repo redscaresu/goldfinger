@@ -1,0 +1,89 @@
+name: Dependency review
+
+# Blocks a PR that adds a dependency with a known vulnerability or a
+# disallowed licence. It diffs the PR's go.mod/go.sum against the base and fails
+# on the findings below — the change-process complement to govulncheck (which
+# scans what's already merged): this stops a bad dep at the door.
+on:
+  pull_request:
+
+# Read-only: the guard reads the dependency-graph SBOM and the action reads the
+# PR diff; neither writes.
+permissions:
+  contents: read
+
+env:
+  # See ci.yml — opt JS actions into Node 24 ahead of the Node 20 deprecation.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Guard on dependency graph
+        # dependency-review-action hard-errors ("not supported on this
+        # repository") unless the repo's Dependency graph is enabled — a
+        # one-time repo-admin toggle (Settings > Code security > Dependency
+        # graph), not something this workflow can set. Rather than leave a
+        # permanently-red required check until an owner flips it, probe the
+        # dependency-graph compare API (the exact endpoint the action calls) and
+        # skip cleanly with a notice ONLY on the deterministic "graph disabled"
+        # signal. Everything transient FAILS CLOSED — a security gate that
+        # silently skips on a blip is worse than no gate:
+        #   - 200            -> graph on, run the real review
+        #   - 403, not rate-limited -> graph off (the token already has
+        #                       contents:read, so a plain Forbidden here is the
+        #                       feature toggle, not auth) -> skip with a notice
+        #   - 403 rate-limited, or anything else (5xx, 401, 429, network) -> red
+        # We probe the compare endpoint, not the deprecated SBOM one (SBOM is
+        # slated for removal 2026-11-13), so a graph-enabled repo keeps running
+        # the real review after that date.
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          body="$(mktemp)"
+          hdr="$(mktemp)"
+          http=$(curl -sS -D "$hdr" -o "$body" -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/dependency-graph/compare/$BASE_SHA...$HEAD_SHA")
+          echo "dependency-graph compare probe: HTTP $http"
+          case "$http" in
+            200)
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              ;;
+            403)
+              remaining=$(grep -i '^x-ratelimit-remaining:' "$hdr" | tr -d '\r' | awk '{print $2}')
+              if [ "${remaining:-1}" = "0" ] || grep -qi 'rate limit' "$body"; then
+                echo "::error::dependency-graph compare probe was rate-limited (HTTP 403) — failing closed rather than skipping the gate."
+                cat "$body"
+                exit 1
+              fi
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::Dependency graph is not enabled, so dependency review is skipped. Enable it at Settings > Code security and analysis > Dependency graph to make this a live PR gate."
+              ;;
+            *)
+              echo "::error::dependency-graph compare probe failed (HTTP $http) — failing closed so a transient/API error can't silently skip the gate."
+              cat "$body"
+              exit 1
+              ;;
+          esac
+
+      - name: Dependency review
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # A new dependency at moderate severity or above fails the check; the
+          # "no new deps without asking" rule means additions are rare and
+          # deliberate, so a real hit here is worth a hard stop.
+          fail-on-severity: moderate
