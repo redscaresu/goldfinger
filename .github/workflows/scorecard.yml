@@ -16,9 +16,12 @@ on:
 # Least-privilege default; the analysis job widens only the two scopes it needs.
 permissions: read-all
 
-env:
-  # See ci.yml — opt JS actions into Node 24 ahead of the Node 20 deprecation.
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+# NOTE: no workflow-level `env`/`defaults` here on purpose. OpenSSF Scorecard's
+# publishing path refuses to publish from a workflow that sets either (part of
+# its tamper-resistance checks), and scorecard-action logs that refusal as a
+# *warning* — the SARIF/code-scanning upload would stay green while the badge
+# silently never updates. The pinned actions below are all Node-era releases, so
+# the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 opt-in used elsewhere isn't needed.
 
 jobs:
   analysis:
