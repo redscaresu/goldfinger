@@ -14,7 +14,9 @@ import (
 // stderr: goldfinger reserves its own stdout for machine-readable output (the
 // mirror workspace path), so a delegate's chatter must never contaminate it.
 func execRun(ctx context.Context, name string, args, env []string) error {
-	c := exec.CommandContext(ctx, name, args...)
+	// name/args are goldfinger's own delegate wiring (ghorg/multi-gitter + flags
+	// built in-process), never unsanitised external input; the single intentional exec seam.
+	c := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: see comment above — controlled delegate invocation, not external input.
 	c.Env = env
 	c.Stdout = os.Stderr
 	c.Stderr = os.Stderr
@@ -55,7 +57,7 @@ func goBinDirContaining(name string) string {
 		dirs = append(dirs, filepath.Join(home, "go", "bin"))
 	}
 	for _, dir := range dirs {
-		info, err := os.Stat(filepath.Join(dir, name))
+		info, err := os.Stat(filepath.Join(dir, name)) //nolint:gosec // G703: dir is a Go bin dir from the environment, name is a fixed tool name; a read-only Stat for a PATH-style lookup, no file contents opened.
 		if err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
 			return dir
 		}
