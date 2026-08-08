@@ -95,7 +95,7 @@ jobs:
         run: |
           mkdir -p dist
           BINARY_NAME="goldfinger-${GOOS}-${GOARCH}"
-          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/${BINARY_NAME}" ./cmd
+          go build -mod=readonly -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/${BINARY_NAME}" ./cmd
           (cd dist && sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256")
 
       - name: Upload binary to release

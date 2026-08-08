@@ -17,12 +17,15 @@ help:
 	@echo "  hooks   Install the gitleaks pre-commit hook into .git/hooks"
 	@echo "  clean   Remove build artifacts"
 
+# -mod=readonly on every build/test: refuse to mutate go.mod/go.sum, so a build
+# fails loudly if a dependency's hash or version drifts from what's committed
+# (module-hash verification) rather than silently rewriting the lockfiles.
 build:
-	$(GO) build -o $(BIN) ./cmd
+	$(GO) build -mod=readonly -o $(BIN) ./cmd
 
 test:
-	$(GO) vet ./...
-	$(GO) test -race -count=2 ./...
+	$(GO) vet -mod=readonly ./...
+	$(GO) test -mod=readonly -race -count=2 ./...
 
 lint:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...

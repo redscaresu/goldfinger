@@ -31,12 +31,14 @@ jobs:
           go-version-file: go.mod
 
       - name: Vet
-        run: go vet ./...
+        # -mod=readonly: fail if go.mod/go.sum would need edits (module-hash
+        # verification) rather than silently rewriting the committed lockfiles.
+        run: go vet -mod=readonly ./...
 
       - name: Test
         # -race: the campaign engine is concurrency-heavy.
         # -count=2: surfaces parallel-subtest races that only flake in CI.
-        run: go test -race -count=2 ./...
+        run: go test -mod=readonly -race -count=2 ./...
 
   lint:
     runs-on: ubuntu-latest
@@ -76,7 +78,7 @@ jobs:
       - name: Measure coverage and enforce the 80% floor
         id: cov
         run: |
-          go test ./... -coverprofile=cover.out
+          go test -mod=readonly ./... -coverprofile=cover.out
           pct=$(go tool cover -func=cover.out | awk '/^total:/ {gsub(/%/,"",$NF); print $NF}')
           echo "pct=$pct" >> "$GITHUB_OUTPUT"
           echo "total coverage: ${pct}%"
@@ -236,7 +238,7 @@ jobs:
         # Pure Go (CGO_ENABLED=0) cross-compiles to darwin from the linux runner.
         run: |
           mkdir -p dist
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -trimpath -o dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -mod=readonly -trimpath -o dist/goldfinger-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd
       - name: Upload binary artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
