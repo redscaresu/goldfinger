@@ -36,6 +36,7 @@ func (c *capture) run(_ context.Context, name string, args, env []string) error 
 }
 
 func TestMirrorInvocation(t *testing.T) {
+	securityTest(t) // locks the no-token-in-argv invariant (see final assertions)
 	var cap capture
 	err := Mirror(context.Background(), cap.run, userSelection(), "secret-token",
 		Options{Workspace: "/tmp/ws", Concurrency: 20, CloneDepth: 1})
@@ -83,6 +84,7 @@ func TestMirrorWritesRepoNames(t *testing.T) {
 }
 
 func TestMirrorOverridesExistingToken(t *testing.T) {
+	securityTest(t)
 	t.Setenv(tokenEnv, "runner-default-token")
 	var cap capture
 	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "our-token", Options{}))
@@ -98,6 +100,7 @@ func TestMirrorOverridesExistingToken(t *testing.T) {
 }
 
 func TestMirrorNeutralisesAmbientConfig(t *testing.T) {
+	securityTest(t)
 	// Ambient set-narrowing/pruning GHORG_* vars must not reach ghorg, and an
 	// empty ghorgignore must be forced so no host ignore file can drop repos.
 	t.Setenv("GHORG_TOPICS", "should-be-stripped")
@@ -129,6 +132,7 @@ func TestMirrorNeutralisesAmbientConfig(t *testing.T) {
 }
 
 func TestMirrorStripsSourcePATFromChildEnv(t *testing.T) {
+	securityTest(t)
 	t.Setenv(models.TokenEnvVar, "raw-pat") // operator's exported GOLD_FINGER_PAT
 	var cap capture
 	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "mapped-token", Options{}))
@@ -141,6 +145,7 @@ func TestMirrorStripsSourcePATFromChildEnv(t *testing.T) {
 }
 
 func TestMirrorPinsLayoutAgainstHostConfig(t *testing.T) {
+	securityTest(t)
 	// The layout <workspace>/<owner>/<repo> is what goldfinger prints, reports, and
 	// reconciles against, so every ghorg knob that could move clones must be both
 	// pinned in argv (a CLI flag overrides env AND config) and scrubbed from the
