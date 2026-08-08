@@ -39,13 +39,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # creates the draft release for this tag
+    outputs:
+      # The release's ACTUAL draft state. The provenance job feeds this to the
+      # SLSA generator's `draft-release` input so its upload matches reality: on a
+      # normal run the release is a fresh draft (true); on a rerun against an
+      # already-PUBLISHED tag it is false, so the upload must not flip the live
+      # release back to draft (which — if a later publish step then failed —
+      # would leave a published release silently hidden).
+      is_draft: ${{ steps.ensure.outputs.is_draft }}
     steps:
       - name: Create draft release with generated notes
+        id: ensure
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             echo "Release ${GITHUB_REF_NAME} already exists; leaving it in place."
+            is_draft=$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)
+            echo "is_draft=${is_draft}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # --verify-tag: fail loudly if the ref isn't a real tag rather than
@@ -56,6 +67,7 @@ jobs:
             --verify-tag \
             --draft \
             --generate-notes
+          echo "is_draft=true" >> "$GITHUB_OUTPUT"
 
   build-and-release:
     needs: create-release
@@ -121,6 +133,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # downloads the per-binary checksums and uploads SHA256SUMS
+    outputs:
+      # base64 of SHA256SUMS ("<hash>  <name>" lines). The SLSA generator signs
+      # these as the provenance subjects, binding every released binary's digest
+      # to this workflow run and commit — see the `provenance` job below.
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Build SHA256SUMS from the per-binary checksums
         env:
@@ -133,6 +150,20 @@ jobs:
           # Each .sha256 already holds "<hash>  <binary>"; concatenating them (sorted
           # by filename for a stable manifest) yields a standard SHA256SUMS file.
           (cd dist && cat *.sha256 | sort -k2 > SHA256SUMS)
+          # Fail closed on an incomplete set: the build matrix ships 4 binaries
+          # (linux/darwin x amd64/arm64). If a leg's checksum is missing, refuse
+          # rather than sign provenance over a partial release.
+          lines=$(grep -c . dist/SHA256SUMS)
+          if [ "$lines" -ne 4 ]; then
+            echo "::error::SHA256SUMS has ${lines} entries, expected 4 (one per platform binary) — refusing to build incomplete provenance."
+            exit 1
+          fi
+
+      - name: Export provenance subjects
+        # SHA256SUMS is already the exact "<hash>  <name>" format the SLSA
+        # generator expects; base64 (single line, -w0) it into a job output.
+        id: hash
+        run: echo "hashes=$(base64 -w0 dist/SHA256SUMS)" >> "$GITHUB_OUTPUT"
 
       - name: Upload SHA256SUMS to release
         env:
@@ -142,11 +173,41 @@ jobs:
             dist/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
-  # Flip the draft release live only after every binary and the SHA256SUMS
-  # manifest are attached, so consumers (and Homebrew) never see a partial
-  # release marked "Latest".
+  # Generate SLSA build provenance for the released binaries and attach it to the
+  # release. The provenance is a Sigstore-signed in-toto attestation that binds
+  # each binary's SHA256 (the subjects from the checksums job) to THIS workflow,
+  # THIS commit, and THIS tag — so `slsa-verifier` can prove a download was built
+  # by our pipeline from our source, not swapped in downstream. This is the
+  # machine-verifiable complement to the SHA256SUMS manifest and the `make repro`
+  # recipe, and it is what OpenSSF Scorecard's Signed-Releases check rewards.
+  #
+  # SLSA's generator MUST be referenced by a version tag, not a commit SHA: its
+  # builder-identity verification (and slsa-verifier) key off the tag, so a SHA
+  # ref is rejected. That makes it the one documented exception to this repo's
+  # SHA-pinning convention — zizmor's unpinned-uses is suppressed inline on the
+  # `uses:` line for exactly that reason.
+  provenance:
+    needs: [create-release, checksums]
+    permissions:
+      actions: read # read the workflow path to record in the provenance
+      id-token: write # keyless Sigstore signing of the attestation
+      contents: write # attach the .intoto.jsonl provenance to the release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0 # zizmor: ignore[unpinned-uses]
+    with:
+      base64-subjects: ${{ needs.checksums.outputs.hashes }}
+      provenance-name: goldfinger.intoto.jsonl
+      upload-assets: true # attach the provenance to this tag's release
+      upload-tag-name: ${{ github.ref_name }}
+      # Match the release's real draft state (see create-release.is_draft): true on
+      # a normal run, false when rerunning against an already-published tag — so the
+      # upload never flips a live release back to draft.
+      draft-release: ${{ needs.create-release.outputs.is_draft }}
+
+  # Flip the draft release live only after every binary, the SHA256SUMS manifest,
+  # and the SLSA provenance are attached, so consumers (and Homebrew) never see a
+  # partial release marked "Latest".
   publish:
-    needs: checksums
+    needs: [checksums, provenance]
     runs-on: ubuntu-latest
     permissions:
       contents: write # publishes the release
