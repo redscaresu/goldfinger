@@ -7,7 +7,8 @@ name: Dependency review
 on:
   pull_request:
 
-# Read-only: the action only needs the dependency graph and the PR diff.
+# Read-only: the guard reads the dependency-graph SBOM and the action reads the
+# PR diff; neither writes.
 permissions:
   contents: read
 
@@ -23,7 +24,30 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Guard on dependency graph
+        # dependency-review-action hard-errors ("not supported on this
+        # repository") unless the repo's Dependency graph is enabled — a
+        # one-time repo-admin toggle (Settings > Code security > Dependency
+        # graph), not something this workflow can set. Rather than leave a
+        # permanently-red required check until an owner flips it, detect the
+        # graph via the SBOM endpoint and skip cleanly with a notice if it's off
+        # — the same guard-then-skip pattern the e2e job uses for its missing
+        # secret. Once the graph is on, the review below runs for real.
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh api "repos/$REPO/dependency-graph/sbom" --silent 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Dependency graph is not enabled, so dependency review is skipped. Enable it at Settings > Code security and analysis > Dependency graph to make this a live PR gate."
+          fi
+
       - name: Dependency review
+        if: steps.guard.outputs.run == 'true'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           # A new dependency at moderate severity or above fails the check; the
