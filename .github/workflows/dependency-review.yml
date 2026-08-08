@@ -1,0 +1,32 @@
+name: Dependency review
+
+# Blocks a PR that adds a dependency with a known vulnerability or a
+# disallowed licence. It diffs the PR's go.mod/go.sum against the base and fails
+# on the findings below — the change-process complement to govulncheck (which
+# scans what's already merged): this stops a bad dep at the door.
+on:
+  pull_request:
+
+# Read-only: the action only needs the dependency graph and the PR diff.
+permissions:
+  contents: read
+
+env:
+  # See ci.yml — opt JS actions into Node 24 ahead of the Node 20 deprecation.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Dependency review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # A new dependency at moderate severity or above fails the check; the
+          # "no new deps without asking" rule means additions are rare and
+          # deliberate, so a real hit here is worth a hard stop.
+          fail-on-severity: moderate
