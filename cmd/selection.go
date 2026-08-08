@@ -39,7 +39,7 @@ func resolveSelectionPath(name, path string) (string, error) {
 // so a name can never escape the registry directory.
 func validSelectionName(name string) error {
 	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." || strings.Contains(name, "..") {
-		return fmt.Errorf("invalid selection name %q: use a simple name without path separators or ..", name)
+		return fmt.Errorf("invalid selection name %q: use a simple name, without path separators or parent-directory references", name)
 	}
 	return nil
 }

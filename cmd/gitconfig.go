@@ -214,7 +214,7 @@ func applyEnvInjectedConfig(cfg *gitConfig) {
 // quoted values. It intentionally does NOT evaluate include/includeIf — if one is
 // seen, resolution is marked unresolved so doctor can warn rather than mislead.
 func parseGitConfigFile(path string, cfg *gitConfig) error {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: path is a git-config location goldfinger resolves itself (GIT_CONFIG paths / ~/.gitconfig) for read-only doctor inspection, not attacker-controlled.
 	if err != nil {
 		return err
 	}

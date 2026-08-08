@@ -230,7 +230,7 @@ func TestNameSelectionExclusionIsAdvertisedWhereverBothFlagsExist(t *testing.T) 
 				hasSelection = true
 			}
 		}
-		if !(hasName && hasSelection) {
+		if !hasName || !hasSelection {
 			continue
 		}
 		sawOne = true
