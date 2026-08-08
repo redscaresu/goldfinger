@@ -1,0 +1,53 @@
+name: CodeQL
+
+# CodeQL static analysis for Go, uploaded to the Security tab's code-scanning.
+# This is the SAST tool OpenSSF Scorecard recognises (its SAST check looks for
+# CodeQL/Sonar-class analysers + code-scanning uploads, not golangci-lint/gosec),
+# so it complements the in-tree gosec+staticcheck gate rather than replacing it:
+# gosec/staticcheck fail a PR fast on lint; CodeQL runs deeper dataflow queries
+# and feeds the external posture signal.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '27 4 * * 1' # weekly, Monday — catch drift in queries/deps
+
+# Least-privilege default; the analyse job widens only security-events:write.
+permissions:
+  contents: read
+
+env:
+  # See ci.yml — opt JS actions into Node 24 ahead of the Node 20 deprecation.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  analyze:
+    name: Analyze (Go)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload the analysis SARIF to code-scanning
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          languages: go
+          # autobuild drives `go build`; init runs it automatically before analyse
+          # when build-mode is autobuild, so no separate build step is needed.
+          build-mode: autobuild
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          category: "/language:go"
