@@ -1,0 +1,32 @@
+# golangci-lint v2 config. Scope is deliberately narrow — the security-relevant
+# linters only, not the full default set (issue #40 asked for gosec + staticcheck
+# specifically, and `go vet` already runs as its own CI step + `make test`):
+#   - gosec:       security static analysis of the exec / temp-script / file
+#                  surface. Every production finding is triaged: either the code
+#                  is hardened, or the call site carries an inline `//nosec CODE
+#                  -- reason` that documents why it is safe (these double as the
+#                  SECURITY.md audit map).
+#   - staticcheck: correctness + simplification checks.
+# Version-pinned in lockstep with .github/workflows/ci.yml and the Makefile
+# `lint` target so CI and local runs can never disagree.
+version: "2"
+
+# Show every finding, not golangci-lint's default first-3-per-rule sample — a
+# security linter that hides repeat findings is worse than none.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: none
+  enable:
+    - gosec
+    - staticcheck
+  exclusions:
+    rules:
+      # Test files legitimately read fixture paths built from variables and write
+      # fixtures with relaxed perms — gosec's file/subprocess checks are noise
+      # there. Production call sites are triaged individually instead.
+      - path: _test\.go
+        linters:
+          - gosec

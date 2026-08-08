@@ -70,4 +70,9 @@ it does not reimplement mirroring or PR-fanout.
 ## Before every commit
 
 `go build ./...`, `go vet ./...`, `go test ./...` clean — or just `make check`,
-which mirrors CI's test job.
+which runs build + test + lint, mirroring CI's `test` and `lint` jobs. `make
+lint` runs golangci-lint (gosec + staticcheck) via `go run` at the version pinned
+in the Makefile; the same version and `.golangci.yml` config drive CI. gosec
+findings on the exec / temp-script / file surface are triaged in-tree: either the
+code is hardened, or the call site carries an inline `//nolint:gosec // reason`
+that documents why it is safe — don't blanket-disable a rule to silence one.
