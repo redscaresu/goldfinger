@@ -87,6 +87,9 @@ func buildSchemaCatalogue() schemaCatalogue {
 			"workspace-manifest": schemaDoc("workspace manifest (goldfinger-workspace.json)",
 				"The sidecar manifest mirror --purpose writes into each snapshot workspace, recording its purpose/branch/stamp/owner for workspaces to read.",
 				workspaceManifestSchemaObj()),
+			"error": schemaDoc("error (machine mode)",
+				"The single-line failure object goldfinger emits to stderr under --quiet: a parseable error message plus the process exit code, in place of the human `Error:` line.",
+				errorReportSchemaObj()),
 		},
 	}
 }
@@ -379,4 +382,12 @@ func workspaceManifestSchemaObj() map[string]any {
 		"owner":     str(),
 		"createdAt": dateTime(),
 	}, "version", "purpose", "stamp", "owner", "createdAt")
+}
+
+func errorReportSchemaObj() map[string]any {
+	return object(map[string]any{
+		"version":  integer(),
+		"error":    str(),
+		"exitCode": integer(),
+	}, "version", "error", "exitCode")
 }

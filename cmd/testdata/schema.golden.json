@@ -338,6 +338,29 @@
       "title": "doctor --json",
       "type": "object"
     },
+    "error": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The single-line failure object goldfinger emits to stderr under --quiet: a parseable error message plus the process exit code, in place of the human `Error:` line.",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "error",
+        "exitCode"
+      ],
+      "title": "error (machine mode)",
+      "type": "object"
+    },
     "lockfile": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,

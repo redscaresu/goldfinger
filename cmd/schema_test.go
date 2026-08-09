@@ -123,6 +123,7 @@ func TestSchemasMatchTheirStructs(t *testing.T) {
 		{"workspacesReport", reflect.TypeOf(workspacesReport{}), workspacesReportSchemaObj()},
 		{"workspaceInfo", reflect.TypeOf(workspaceInfo{}), workspaceInfoSchemaObj()},
 		{"workspaceManifest", reflect.TypeOf(workspaceManifest{}), workspaceManifestSchemaObj()},
+		{"errorReport", reflect.TypeOf(errorReport{}), errorReportSchemaObj()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -234,6 +235,7 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 			Version: workspaceManifestVersion, Purpose: "audit", Branch: "dev",
 			Stamp: "2026-08-05-101112.131", Owner: "acme", CreatedAt: time.Now().UTC(),
 		},
+		"error": errorReport{Version: errorReportVersion, Error: "verifying token: unauthorized", ExitCode: 2},
 	}
 
 	cat := buildSchemaCatalogue()
@@ -440,13 +442,14 @@ func TestEveryJSONEmittingCommandHasASchema(t *testing.T) {
 		claimedBy[key]++
 	}
 
-	// On-disk artifacts have no emitting command — the lockfile is the persisted
-	// selection, and workspace-manifest is the sidecar mirror --purpose writes into
-	// each snapshot. Every other schema must be claimed by exactly one
-	// JSON-emitting command.
-	onDiskArtifacts := map[string]bool{"lockfile": true, "workspace-manifest": true}
+	// Some surfaces have no single emitting command: the lockfile is the persisted
+	// selection, workspace-manifest is the sidecar mirror --purpose writes into each
+	// snapshot, and error is the process-level failure object reportExit emits to
+	// stderr under --quiet (owned by main, not any command's --json flag). Every
+	// other schema must be claimed by exactly one JSON-emitting command.
+	noEmittingCommand := map[string]bool{"lockfile": true, "workspace-manifest": true, "error": true}
 	for key := range cat.Schemas {
-		if onDiskArtifacts[key] {
+		if noEmittingCommand[key] {
 			continue
 		}
 		assert.Equalf(t, 1, claimedBy[key], "schema %q must be referenced by exactly one JSON-emitting command, got %d", key, claimedBy[key])

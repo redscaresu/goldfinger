@@ -314,6 +314,11 @@ MACHINE-READABLE OUTPUT
   Each payload carries a top-level `version` for shape-stability, except
   `select --json` whose version is the nested selection.version (the lockfile
   version), so the nested object stays identical to goldfinger.selection on disk.
+  Failures are one parseable line, never a stack dump: a genuine error collapses
+  to a single stderr line — `Error: <msg>` in human mode, or the compact object
+  {version, error, exitCode} under --quiet (the `error` surface in schema). A
+  domain-signal exit (drift, a failed doctor check) prints nothing; the exit code
+  carries it (0 ok / 1 domain outcome / 2 error).
 
 NOTES FOR AI AGENTS
   - The selection lockfile is JSON — read it directly for structured state.
