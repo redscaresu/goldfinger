@@ -27,10 +27,10 @@ PREREQUISITES
     `gh auth token` subprocess itself honours an ambient GH_TOKEN/GITHUB_TOKEN,
     so a stray one silently changes which identity goldfinger (and ghorg)
     authenticate as — a wrong-identity run looks like "0 repos", not an auth
-    error. Every run prints its token source + authenticated principal on stderr
-    and warns when a gh token may be shadowed; if the identity is wrong,
-    `unset GITHUB_TOKEN GH_TOKEN` or set GOLD_FINGER_PAT. The token is never
-    printed.
+    error. Unless --quiet is set, every run prints its token source +
+    authenticated principal on stderr and warns when a gh token may be shadowed;
+    if the identity is wrong, `unset GITHUB_TOKEN GH_TOKEN` or set
+    GOLD_FINGER_PAT. The token is never printed.
   - ghorg and multi-gitter on PATH (the brew install above pulls both in;
     install them yourself only for non-brew setups).
   - Configure a git identity (git config user.name / user.email). multi-gitter
@@ -266,7 +266,9 @@ EXIT CODES
 
 MACHINE-READABLE OUTPUT
   Every read command emits JSON on request, one contract: stdout = machine data,
-  stderr = human banners/logs. In --json mode stdout is ONLY the JSON.
+  stderr = human banners/logs. In --json mode stdout is ONLY the JSON. Human
+  stderr can be discarded with 2>/dev/null. The global --quiet / -q flag silences
+  that human stream and keeps stdout to a single machine result.
        goldfinger select --json ...   -> {selectionPath, selection:{…lockfile…}}
        goldfinger doctor --json       -> {version, checks:[{check, status, detail, fix}]}
        goldfinger check --json        -> {version, inSync, added, removed, …}
@@ -276,6 +278,17 @@ MACHINE-READABLE OUTPUT
        goldfinger apply --plan-json ... -> {version, dry_run, sign_mode, repos, …}
        goldfinger guide --json        -> {version, commands:[{name, flags, …}]}
        goldfinger schema              -> {version, schemas:{lockfile, check, …}}
+  Quiet non-JSON stdout contract:
+       goldfinger select --quiet ...   -> lockfile path
+       goldfinger mirror --quiet ...   -> workspace path (empty for a dry-run)
+       goldfinger apply --quiet ...    -> dry-run status digest on stdout (no temp
+                                          file); --plan-json instead -> plan JSON,
+                                          digest suppressed; a live run -> empty
+       goldfinger check --quiet        -> empty stdout; exit code carries sync/drift
+       goldfinger doctor --quiet       -> empty stdout; exit code carries pass/fail
+       goldfinger selections --quiet   -> empty stdout unless --json
+       goldfinger workspaces list --quiet -> empty stdout unless --json
+  guide and schema are already stdout payloads, so --quiet is a no-op for them.
   guide --json is the self-describing CLI catalogue: every command, its flags,
   which flags are required, a flag's enum values (e.g. --sign), and a canonical
   example per command — discover what goldfinger can do by parsing structure
@@ -290,7 +303,9 @@ MACHINE-READABLE OUTPUT
   apply --plan-json emits the INVOCATION plan (not the diff; command redacted to
   argv[0], body as a presence bool) on stdout and STILL runs multi-gitter's
   dry-run — you get both the plan and the status digest plus full-output file
-  path (on stderr).
+  path (on stderr). Under --quiet the human stderr is silenced: --plan-json then
+  yields the plan alone on stdout, or without it the status digest moves to
+  stdout (and the full-output temp file is not written).
   Each payload carries a top-level `version` for shape-stability, except
   `select --json` whose version is the nested selection.version (the lockfile
   version), so the nested object stays identical to goldfinger.selection on disk.
@@ -302,6 +317,8 @@ NOTES FOR AI AGENTS
     — a machine-readable go/no-go before you select or apply.
   - Every read command takes --json (doctor/select/check/selections) or --report-json
     (mirror): prefer it over scraping prose. stdout is the data, stderr the noise.
+    Add --quiet / -q when you want stderr silenced and stdout reduced to the
+    single machine result (or JSON when a JSON flag is also set).
   - `goldfinger schema` prints the JSON Schema for every one of those payloads —
     validate goldfinger's output against it rather than guessing field shapes.
   - Before authoring an apply, MIRROR first and READ the real code (Dockerfiles,

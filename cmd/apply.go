@@ -38,6 +38,8 @@ func newApplyCmd() *cobra.Command {
 		Use:   "apply [flags] -- command [args...]",
 		Short: "Run a change across the selection and open PRs via multi-gitter",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			quiet := quietRequested(cmd)
+			errOut := humanErr(cmd)
 			// Pure/local validation first — flags, mutual exclusions, the confirm
 			// safety guard — so a bad invocation fails without resolving a token
 			// (which can shell out to `gh`) or hitting the network.
@@ -81,11 +83,11 @@ func newApplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			announceTokenSource(cmd.ErrOrStderr(), source)
+			announceTokenSource(errOut, source)
 			if err := requireTool("multi-gitter", "https://github.com/lindell/multi-gitter#installation"); err != nil {
 				return err
 			}
-			if err := verifyAndAnnouncePrincipal(cmd.Context(), cmd.ErrOrStderr(), token); err != nil {
+			if err := verifyAndAnnouncePrincipal(cmd.Context(), errOut, token); err != nil {
 				return err
 			}
 			spec := models.ApplySpec{
@@ -104,7 +106,11 @@ func newApplyCmd() *cobra.Command {
 				BatchSize:     batchSize,
 				BatchPause:    batchPause,
 			}
-			return runApply(cmd.Context(), execApplyRun, sel, spec, token, planJSON, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			run := execApplyRun
+			if quiet {
+				run = execApplyRunQuiet
+			}
+			return runApply(cmd.Context(), run, sel, spec, token, applyOutputOptions{planJSON: planJSON, quiet: quiet}, cmd.OutOrStdout(), errOut)
 		},
 	}
 	addSelectionFlags(cmd, &name, &selectionPath)
@@ -123,8 +129,13 @@ func newApplyCmd() *cobra.Command {
 	f.BoolVar(&confirm, "confirm", false, "required alongside --dry-run=false to actually open PRs")
 	f.IntVar(&batchSize, "batch-size", 0, "open PRs in batches of this many repos to stay under GitHub rate limits (0 = one run over the whole selection)")
 	f.DurationVar(&batchPause, "batch-pause", 0, "pause between batches, e.g. 60s (only used with --batch-size)")
-	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run status digest on stderr")
+	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run status digest (on stderr; suppressed under --quiet, where the plan owns stdout)")
 	return cmd
+}
+
+type applyOutputOptions struct {
+	planJSON bool
+	quiet    bool
 }
 
 // runApply frames the apply phase and delegates to the apply package. It is the
@@ -132,9 +143,11 @@ func newApplyCmd() *cobra.Command {
 //
 // When planJSON is set, the machine-readable plan (what goldfinger will invoke) is
 // written to out (stdout) before delegating — it supplements, and never replaces,
-// the dry-run status digest on stderr. It is not a metadata-only short-circuit:
-// apply.Apply still runs.
-func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec models.ApplySpec, token string, planJSON bool, out, errOut io.Writer) error {
+// the dry-run status digest (on stderr normally; relocated to stdout under
+// --quiet, or suppressed when --quiet and --plan-json both claim stdout). It is
+// not a metadata-only short-circuit: apply.Apply still runs.
+func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec models.ApplySpec, token string, opts applyOutputOptions, out, errOut io.Writer) error {
+	errOut = quietWriter(errOut, opts.quiet)
 	mode := "LIVE — opening PRs"
 	if spec.DryRun {
 		mode = "dry-run — no push, no PRs"
@@ -165,14 +178,29 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 	// it cleanly. It is emitted before delegating so it survives a later
 	// multi-gitter failure, and it does not short-circuit the run — apply.Apply
 	// still executes so the operator/agent also gets the dry-run status digest.
-	if planJSON {
+	if opts.planJSON {
 		if err := emitJSON(out, buildApplyPlan(sel, spec)); err != nil {
 			return err
 		}
 	}
 	result, err := apply.Apply(ctx, run, sel, spec, token)
 	if spec.DryRun {
-		if digestErr := printDryRunDigest(errOut, sel.Repos, result.Output); digestErr != nil {
+		// The digest is the dry-run's machine result. In normal mode it goes to
+		// stderr (the human stream) alongside a full-output drill-down log. Under
+		// --quiet that stream is discarded, so the digest would vanish entirely —
+		// relocate it to stdout so a machine run still learns would-change vs
+		// no-change vs error, and skip the operator-only log file. With
+		// --plan-json the plan already owns stdout, so the digest stays on the
+		// (discarded) human stream rather than emitting a second, colliding
+		// document.
+		digestOut, writeLog := errOut, true
+		if opts.quiet {
+			writeLog = false
+			if !opts.planJSON {
+				digestOut = out
+			}
+		}
+		if digestErr := printDryRunDigest(digestOut, sel.Repos, result.Output, writeLog); digestErr != nil {
 			if err != nil {
 				return errors.Join(err, digestErr)
 			}
@@ -186,7 +214,7 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 	return nil
 }
 
-func printDryRunDigest(w io.Writer, repos []models.Repo, output []byte) error {
+func printDryRunDigest(w io.Writer, repos []models.Repo, output []byte, writeLog bool) error {
 	digest := apply.SummarizeDryRunOutput(repos, output)
 	repoWord := "repos"
 	if digest.RepoCount == 1 {
@@ -210,6 +238,12 @@ func printDryRunDigest(w io.Writer, repos []models.Repo, output []byte) error {
 		fmt.Fprintf(w, "  %s   %s\n", repo.Repo, repo.Status)
 	}
 
+	// The full-output log is an operator drill-down aid on the human stream; a
+	// quiet machine run neither wants the file nor a path it cannot consume, so
+	// callers skip it there (and avoid a spurious exit-2 on an unwritable TMPDIR).
+	if !writeLog {
+		return nil
+	}
 	path, err := writeFullRunOutput(output)
 	if err != nil {
 		return err

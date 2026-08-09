@@ -40,8 +40,13 @@ func okDeps() doctorDeps {
 
 func runDoctorCapture(t *testing.T, deps doctorDeps, asJSON bool) (out, errOut string, err error) {
 	t.Helper()
+	return runDoctorCaptureOpts(t, deps, doctorOpts{asJSON: asJSON})
+}
+
+func runDoctorCaptureOpts(t *testing.T, deps doctorDeps, opts doctorOpts) (out, errOut string, err error) {
+	t.Helper()
 	var o, e bytes.Buffer
-	err = runDoctor(context.Background(), deps, doctorOpts{asJSON: asJSON}, &o, &e)
+	err = runDoctor(context.Background(), deps, opts, &o, &e)
 	return o.String(), e.String(), err
 }
 
@@ -154,6 +159,35 @@ func TestRunDoctorJSONShapeAndNoToken(t *testing.T) {
 	assert.Equal(t, statusOK, byName["multi-gitter"].Status)
 	assert.Equal(t, statusOK, byName["git-identity"].Status)
 	assert.Contains(t, []string{statusOK, statusInfo, statusWarn}, byName["signing"].Status)
+}
+
+func TestRunDoctorQuiet(t *testing.T) {
+	t.Run("non-json emits nothing but keeps exit code", func(t *testing.T) {
+		out, errOut, err := runDoctorCaptureOpts(t, okDeps(), doctorOpts{quiet: true})
+		require.NoError(t, err)
+		assert.Empty(t, out)
+		assert.Empty(t, errOut)
+	})
+
+	t.Run("failed check emits nothing and exits 1", func(t *testing.T) {
+		deps := okDeps()
+		deps.resolveToken = func(context.Context) (string, string, error) {
+			return "", "", errors.New("no GitHub token found")
+		}
+		out, errOut, err := runDoctorCaptureOpts(t, deps, doctorOpts{quiet: true})
+		assert.Equal(t, 1, exitCode(err))
+		assert.Empty(t, out)
+		assert.Empty(t, errOut)
+	})
+
+	t.Run("json emits report only", func(t *testing.T) {
+		out, errOut, err := runDoctorCaptureOpts(t, okDeps(), doctorOpts{asJSON: true, quiet: true})
+		require.NoError(t, err)
+		var rep doctorReport
+		require.NoError(t, json.Unmarshal([]byte(out), &rep))
+		assert.Equal(t, doctorReportVersion, rep.Version)
+		assert.Empty(t, errOut)
+	})
 }
 
 // TestRunDoctorNeverSpawnsGit is the charter guard: doctor resolves git identity

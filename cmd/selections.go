@@ -33,6 +33,11 @@ type selectionEntryJSON struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type selectionsOptions struct {
+	asJSON bool
+	quiet  bool
+}
+
 func newSelectionsCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
@@ -43,15 +48,23 @@ func newSelectionsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if asJSON {
-				return emitSelectionsJSON(cmd.OutOrStdout(), names)
-			}
-			return renderSelectionsTable(cmd.OutOrStdout(), cmd.ErrOrStderr(), names)
+			return runSelections(names, selectionsOptions{asJSON: asJSON, quiet: quietRequested(cmd)}, cmd.OutOrStdout(), humanErr(cmd))
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false,
 		"emit the registry as a versioned JSON wrapper on stdout (unreadable entries carry an `error` field; an empty registry is an empty list, not an error)")
 	return cmd
+}
+
+func runSelections(names []string, opts selectionsOptions, out, errOut io.Writer) error {
+	errOut = quietWriter(errOut, opts.quiet)
+	if opts.asJSON {
+		return emitSelectionsJSON(out, names)
+	}
+	if opts.quiet {
+		return nil
+	}
+	return renderSelectionsTable(out, errOut, names)
 }
 
 // renderSelectionsTable writes the human table. An empty registry prints a

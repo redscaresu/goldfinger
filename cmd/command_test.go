@@ -60,6 +60,19 @@ func TestVersionRenders(t *testing.T) {
 	assert.Contains(t, out, "dev")
 }
 
+func TestQuietFlagIsPersistent(t *testing.T) {
+	for _, args := range [][]string{
+		{"--quiet", "guide"},
+		{"guide", "--quiet"},
+		{"-q", "guide"},
+		{"guide", "-q"},
+	} {
+		out, err := executeCmd(t, "", args...)
+		require.NoError(t, err)
+		assert.Contains(t, out, "goldfinger — operator guide")
+	}
+}
+
 func TestSelectValidation(t *testing.T) {
 	// Only error paths are exercised here: they all return before any network
 	// call. The valid-targeting happy path resolves real repos, so it is covered

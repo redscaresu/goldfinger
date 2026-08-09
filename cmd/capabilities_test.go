@@ -56,6 +56,17 @@ func TestGuideJSONEmitsVersionedCatalogue(t *testing.T) {
 	assert.Equal(t, "true", findFlag(t, apply, "--dry-run").Default, "apply's dry-run-by-default must be visible in the catalogue")
 }
 
+func TestGuideJSONIncludesQuietGlobalFlag(t *testing.T) {
+	caps := buildCapabilities(newRootCmd())
+	for _, name := range []string{"select", "mirror", "apply", "check", "selections", "doctor", "guide", "schema", "workspaces"} {
+		cmd := findCommand(t, caps, name)
+		quiet := findFlag(t, cmd, "--quiet")
+		assert.Falsef(t, quiet.Required, "%s --quiet must be optional", name)
+		assert.Contains(t, quiet.Usage, "silence human progress")
+		assert.Empty(t, quiet.Default, "false default should stay omitted from the terse catalogue")
+	}
+}
+
 func TestApplyCapabilitiesDescribeDryRunDigest(t *testing.T) {
 	apply := findCommand(t, buildCapabilities(newRootCmd()), "apply")
 	var found bool

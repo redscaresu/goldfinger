@@ -132,6 +132,45 @@ func TestRunCheckReportsOwnerTypeDrift(t *testing.T) {
 	assert.Contains(t, out.String(), "owner type changed: User -> Organization")
 }
 
+func TestRunCheckQuiet(t *testing.T) {
+	t.Run("in sync emits nothing", func(t *testing.T) {
+		sel := lockfile()
+		r := fakeResolver{ownerType: models.OwnerUser, repos: sel.Repos}
+		var out, errOut bytes.Buffer
+
+		err := runCheck(context.Background(), r, sel, checkOpts{quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		assert.Empty(t, out.String())
+		assert.Empty(t, errOut.String())
+	})
+
+	t.Run("drift emits nothing and exits 1", func(t *testing.T) {
+		sel := lockfile()
+		r := fakeResolver{ownerType: models.OwnerUser, repos: []models.Repo{{Owner: "acme", Name: "c", DefaultBranch: "main"}}}
+		var out, errOut bytes.Buffer
+
+		err := runCheck(context.Background(), r, sel, checkOpts{quiet: true}, &out, &errOut)
+		var ee exitError
+		require.ErrorAs(t, err, &ee)
+		assert.Equal(t, 1, ee.code)
+		assert.Empty(t, out.String())
+		assert.Empty(t, errOut.String())
+	})
+
+	t.Run("json emits report only", func(t *testing.T) {
+		sel := lockfile()
+		r := fakeResolver{ownerType: models.OwnerUser, repos: sel.Repos}
+		var out, errOut bytes.Buffer
+
+		err := runCheck(context.Background(), r, sel, checkOpts{asJSON: true, quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		var rep checkReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+		assert.True(t, rep.InSync)
+		assert.Empty(t, errOut.String())
+	})
+}
+
 func TestRunCheckPropagatesErrors(t *testing.T) {
 	sel := lockfile()
 

@@ -64,6 +64,14 @@ func TestJSONFlagIsANoOp(t *testing.T) {
 	assert.Equal(t, plain, withFlag)
 }
 
+func TestSchemaQuietIsANoOp(t *testing.T) {
+	plain, err := executeCmd(t, "", "schema")
+	require.NoError(t, err)
+	quiet, err := executeCmd(t, "", "schema", "--quiet")
+	require.NoError(t, err)
+	assert.Equal(t, plain, quiet)
+}
+
 // TestSchemasMatchTheirStructs is the anti-drift core: for every Go struct that
 // appears in a machine surface, it reflects over the struct's json tags and proves
 // the hand-authored schema's `properties` covers exactly those fields, and its
@@ -254,7 +262,7 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 			Version: workspacesReportVersion, Root: "/home/u/goldfinger",
 			Action: workspaceActionPrune, Pruned: false,
 			Workspaces: []workspaceInfo{{
-				Path: "/home/u/goldfinger/legacy-2026-01-02-030405.006",
+				Path:  "/home/u/goldfinger/legacy-2026-01-02-030405.006",
 				Stamp: "2026-01-02-030405.006", SizeBytes: 0, ManifestPresent: false,
 			}},
 		}},

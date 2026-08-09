@@ -61,7 +61,7 @@ func TestRunApply(t *testing.T) {
 			return []byte("Repositories with a successful run:\n  acme/a #0\n"), nil
 		}
 		var errOut bytes.Buffer
-		err := runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut)
+		err := runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{}, io.Discard, &errOut)
 		require.NoError(t, err)
 		assert.Contains(t, errOut.String(), "Applying to 1 repo(s)")
 		assert.Contains(t, errOut.String(), "dry-run")
@@ -85,7 +85,7 @@ func TestRunApply(t *testing.T) {
 		live.Confirm = true // Apply refuses a live run that isn't confirmed
 		var errOut bytes.Buffer
 		run := func(_ context.Context, _ string, _, _ []string) ([]byte, error) { return nil, nil }
-		require.NoError(t, runApply(context.Background(), run, sel, live, "tok", false, io.Discard, &errOut))
+		require.NoError(t, runApply(context.Background(), run, sel, live, "tok", applyOutputOptions{}, io.Discard, &errOut))
 		assert.Contains(t, errOut.String(), "LIVE")
 		assert.NotContains(t, errOut.String(), "dry-run:")
 		assert.NotContains(t, errOut.String(), "full run output:")
@@ -97,11 +97,58 @@ func TestRunApply(t *testing.T) {
 			return []byte("Clone failed:\n  acme/a\n"), errors.New("mg blew up")
 		}
 		var errOut bytes.Buffer
-		err := runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut)
+		err := runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{}, io.Discard, &errOut)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "mg blew up")
 		assert.Contains(t, errOut.String(), "dry-run: 1 repo")
 		assert.Contains(t, errOut.String(), "  acme/a   error: Clone failed")
+	})
+}
+
+func TestRunApplyQuiet(t *testing.T) {
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a", DefaultBranch: "main"}}}
+	spec := models.ApplySpec{Branch: "b", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
+	run := func(_ context.Context, _ string, _, _ []string) ([]byte, error) {
+		return []byte("Repositories with a successful run:\n  acme/a #0\n"), nil
+	}
+
+	t.Run("no plan moves the digest to stdout, no human stderr, no temp file", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("TMPDIR", tmp)
+		var out, errOut bytes.Buffer
+		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{quiet: true}, &out, &errOut))
+		// The dry-run result is the machine output under quiet: it must reach
+		// stdout so an agent learns would-change vs no-change.
+		assert.Contains(t, out.String(), "dry-run: 1 repo")
+		assert.Contains(t, out.String(), "acme/a   would-change")
+		assert.NotContains(t, out.String(), "full run output:", "quiet skips the operator drill-down log")
+		assert.Empty(t, errOut.String())
+		// The full-output temp file is not written under quiet.
+		entries, err := os.ReadDir(tmp)
+		require.NoError(t, err)
+		assert.Empty(t, entries, "quiet dry-run must not leave a goldfinger-apply-output-*.log")
+	})
+
+	t.Run("plan-json emits JSON only", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir())
+		var out, errOut bytes.Buffer
+		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{planJSON: true, quiet: true}, &out, &errOut))
+		var plan applyPlan
+		require.NoError(t, json.Unmarshal(out.Bytes(), &plan))
+		assert.Equal(t, applyPlanVersion, plan.Version)
+		assert.Empty(t, errOut.String())
+		assert.NotContains(t, out.String(), "dry-run:")
+	})
+
+	t.Run("live run emits nothing — the digest only ever reaches stdout for a dry-run", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir())
+		live := spec
+		live.DryRun = false
+		live.Confirm = true // Apply refuses a live run that isn't confirmed
+		var out, errOut bytes.Buffer
+		require.NoError(t, runApply(context.Background(), run, sel, live, "tok", applyOutputOptions{quiet: true}, &out, &errOut))
+		assert.Empty(t, out.String(), "a live run has no dry-run digest, so quiet stdout stays empty")
+		assert.Empty(t, errOut.String())
 	})
 }
 
@@ -136,7 +183,7 @@ func TestRunApplyPlanJSON(t *testing.T) {
 		assert.Contains(t, args, "--dry-run", "plan-json supplements, never replaces, the dry-run")
 		return []byte("Repositories with a successful run:\n  acme/a #0\n  acme/b #0\n"), nil
 	}
-	require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", true, &out, &errOut))
+	require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{planJSON: true}, &out, &errOut))
 	assert.True(t, called, "apply.Apply still runs — plan-json is not a short-circuit")
 
 	// stdout is the plan JSON only; banners went to stderr.
@@ -170,7 +217,7 @@ func TestRunApplyPlanJSON(t *testing.T) {
 		s2 := spec
 		s2.BaseBranch = "release"
 		var out2 bytes.Buffer
-		require.NoError(t, runApply(context.Background(), run, sel, s2, "tok", true, &out2, &bytes.Buffer{}))
+		require.NoError(t, runApply(context.Background(), run, sel, s2, "tok", applyOutputOptions{planJSON: true}, &out2, &bytes.Buffer{}))
 		var p2 applyPlan
 		require.NoError(t, json.Unmarshal(out2.Bytes(), &p2))
 		assert.Equal(t, "explicit:release", p2.BaseBranchSrc)
@@ -209,7 +256,7 @@ func TestRunApplyPrintsPerRepoBase(t *testing.T) {
 		t.Setenv("TMPDIR", t.TempDir())
 		spec := models.ApplySpec{Branch: "x", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
 		var errOut bytes.Buffer
-		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut))
+		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{}, io.Discard, &errOut))
 		assert.Contains(t, errOut.String(), "acme/a -> main")
 		assert.Contains(t, errOut.String(), "acme/b -> dev")
 	})
@@ -218,7 +265,7 @@ func TestRunApplyPrintsPerRepoBase(t *testing.T) {
 		t.Setenv("TMPDIR", t.TempDir())
 		spec := models.ApplySpec{Branch: "x", BaseBranch: "release", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
 		var errOut bytes.Buffer
-		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut))
+		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{}, io.Discard, &errOut))
 		assert.Contains(t, errOut.String(), "acme/a -> release")
 		assert.Contains(t, errOut.String(), "acme/b -> release")
 	})
@@ -243,7 +290,7 @@ func TestRunApplySigningBanner(t *testing.T) {
 			t.Setenv("TMPDIR", t.TempDir())
 			spec := models.ApplySpec{Branch: "b", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: tt.mode}
 			var errOut bytes.Buffer
-			require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut))
+			require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{}, io.Discard, &errOut))
 			assert.Contains(t, errOut.String(), "signing: "+tt.mode)
 			assert.Contains(t, errOut.String(), tt.want)
 		})

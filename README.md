@@ -141,9 +141,10 @@ goldfinger select --org mycompany --all-repos
   not an intended empty fleet. The error names the authenticated identity and the
   inputs so you can tell those apart. Pass `--allow-empty` for the rare case where
   an empty selection is genuinely what you want.
-- **Auth transparency:** every run prints, on **stderr**, which credential it used
-  (`auth: using …`) and the GitHub login it resolved to (`auth: authenticated as
-  …`) — so a wrong-token result is diagnosable at a glance. If the token came from
+- **Auth transparency:** unless `--quiet` is set, every run prints, on
+  **stderr**, which credential it used (`auth: using …`) and the GitHub login it
+  resolved to (`auth: authenticated as …`) — so a wrong-token result is
+  diagnosable at a glance. If the token came from
   your `gh` session and a stray `GITHUB_TOKEN`/`GH_TOKEN` is set in the
   environment, it also warns that `gh` may be using that ambient token instead of
   your stored login. The token value itself is never printed.
@@ -386,7 +387,8 @@ apply-time signal.)
   the PR body is reduced to `pr_body_present` (a boolean). `--plan-json`
   **supplements** the dry-run — it does not replace it: goldfinger still runs
   multi-gitter's `--dry-run` so you get both the plan (stdout) and the status
-  digest plus full-output file path (stderr). `base_branch_recorded` is the value
+  digest plus full-output file path (stderr — under `--quiet` the plan keeps
+  stdout and the digest is suppressed). `base_branch_recorded` is the value
   **recorded at selection time**;
   with no `--base-branch`, multi-gitter targets each repo's *live* default at run
   time, which can drift (same caveat the dry-run banner prints) — the guarantee
@@ -539,7 +541,9 @@ of the root, re-checked immediately before each removal as defence in depth.
 Every read command emits structured JSON on request, following one contract:
 **stdout is machine data, stderr is human banners/logs.** In `--json` mode the
 JSON is the *only* thing on stdout — banners, progress, and the auth lines all go
-to stderr — so an agent can parse stdout without stripping prose.
+to stderr — so an agent can parse stdout without stripping prose. The global
+`--quiet` / `-q` flag silences that human stderr stream and, for non-JSON
+commands, reduces stdout to the one machine result described below.
 
 | Command | Flag | Payload |
 | ------- | ---- | ------- |
@@ -578,6 +582,44 @@ all-clear from a failed check from a doctor that couldn't run. A wrong or
 empty-result token trips `2`, never a false "in sync": `select` treats a
 zero-repo match as an error (pass `--allow-empty` for the rare intended case)
 rather than silently freezing an empty fleet.
+
+## Designed for agents: reducing token consumption
+
+goldfinger's command streams are designed so an agent can keep only the data it
+needs. stdout carries the result; stderr carries human progress, auth
+announcements, banners, child-tool chatter, and summaries that can be discarded
+with `2>/dev/null`. `--quiet` / `-q` suppresses that human stream and keeps stdout
+to one representation:
+
+```sh
+selection=$(goldfinger select --quiet --org mycompany --topic platform)
+workspace=$(goldfinger mirror --quiet --purpose keyv-cve)
+goldfinger select --quiet --json --org mycompany --topic platform > selection-report.json
+goldfinger mirror --quiet --report-json > mirror-report.json
+```
+
+Under quiet, `select` prints the lockfile path (or the JSON report with
+`--json`), `mirror` prints the workspace path (or the JSON report with
+`--report-json`; a dry-run creates no workspace, so it prints nothing), a dry-run
+`apply` prints its per-repo status digest (or, with `--plan-json`, the plan JSON
+instead), and `check`, `doctor`, `selections`, and `workspaces` print JSON only
+when their `--json` flag is set. `guide` and `schema` are already stdout payloads,
+so quiet is a no-op for them.
+
+For apply dry-runs, consume goldfinger's per-repo status digest instead of
+scraping the fleet-wide child output. The digest names `would-change`,
+`no-change`, and `error` repos. In normal mode it prints to stderr with the full
+captured output file path; under `--quiet` it becomes the stdout machine result
+(and the temp file is skipped), so an agent still learns what would change
+without the human banners — unless `--plan-json` is set, which then owns stdout
+and suppresses the digest. A live (non-dry-run) quiet apply prints nothing; its
+exit code carries multi-gitter's success.
+
+Large artifacts are files, not streams: `mirror --write-report` writes the mirror
+report under the workspace, and apply dry-runs write the full multi-gitter output
+to a temp log. Compact JSON contracts stay discoverable: `guide --json` is the
+input catalogue, `schema` is the output contract, and command-specific flags like
+`--report-json` and `--plan-json` keep stdout parseable.
 
 ## Install
 
@@ -710,11 +752,12 @@ The catch: the `gh auth token` subprocess **itself** honours an ambient
 `GH_TOKEN`/`GITHUB_TOKEN` in the environment, so a stray one of those can silently
 change *which identity* goldfinger (and, downstream, ghorg) authenticates as —
 producing a wrong-identity result that looks like "no repos found" rather than an
-auth error. goldfinger surfaces this: every `select`/`check`/`mirror`/`apply` run
-prints its resolved token source and authenticated principal on stderr, and warns
-when a gh-sourced token may be shadowed by an ambient `GH_TOKEN`/`GITHUB_TOKEN`.
-If you see an unexpected identity, `unset GITHUB_TOKEN GH_TOKEN` or set
-`GOLD_FINGER_PAT` explicitly. The token value is never printed.
+auth error. goldfinger surfaces this: unless `--quiet` is set, every
+`select`/`check`/`mirror`/`apply` run prints its resolved token source and
+authenticated principal on stderr, and warns when a gh-sourced token may be
+shadowed by an ambient `GH_TOKEN`/`GITHUB_TOKEN`. If you see an unexpected
+identity, `unset GITHUB_TOKEN GH_TOKEN` or set `GOLD_FINGER_PAT` explicitly. The
+token value is never printed.
 
 ## Requirements
 

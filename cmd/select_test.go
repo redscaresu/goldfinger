@@ -123,6 +123,58 @@ func TestRunSelectJSON(t *testing.T) {
 	assert.NotContains(t, out.String(), "written to")
 }
 
+func TestRunSelectQuietPrintsLockfilePathOnly(t *testing.T) {
+	r := fakeResolver{
+		login:     "redscaresu",
+		ownerType: models.OwnerUser,
+		repos: []models.Repo{
+			{Owner: "redscaresu", Name: "platform-svc", Topics: []string{"platform"}},
+			{Owner: "redscaresu", Name: "web", Topics: []string{"frontend"}},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	var out, errOut bytes.Buffer
+
+	err := runSelect(context.Background(), r, selectOpts{
+		t:             targeting{org: "redscaresu", topics: []string{"platform"}},
+		selectionPath: path,
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+		quiet:         true,
+	}, &out, &errOut)
+	require.NoError(t, err)
+
+	assert.Equal(t, path+"\n", out.String())
+	assert.NotContains(t, out.String(), "redscaresu/platform-svc")
+	assert.Empty(t, errOut.String(), "quiet suppresses banners/auth/done lines")
+}
+
+func TestRunSelectQuietJSONPrintsJSONOnly(t *testing.T) {
+	r := fakeResolver{
+		login:     "redscaresu",
+		ownerType: models.OwnerUser,
+		repos:     []models.Repo{{Owner: "redscaresu", Name: "platform-svc", Topics: []string{"platform"}}},
+	}
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	var out, errOut bytes.Buffer
+
+	err := runSelect(context.Background(), r, selectOpts{
+		t:             targeting{org: "redscaresu", topics: []string{"platform"}},
+		selectionPath: path,
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+		asJSON:        true,
+		quiet:         true,
+	}, &out, &errOut)
+	require.NoError(t, err)
+
+	var rep selectJSONReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+	assert.Equal(t, path, rep.SelectionPath)
+	assert.Empty(t, errOut.String(), "quiet suppresses human stderr")
+	assert.True(t, bytes.HasPrefix(bytes.TrimSpace(out.Bytes()), []byte("{")), "stdout must be one JSON document, not a path plus JSON")
+}
+
 func TestRunSelectPropagatesErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "goldfinger.selection")
 
