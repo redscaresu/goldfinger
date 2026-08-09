@@ -26,12 +26,26 @@ const (
 	workspaceManifestVersion = 1
 )
 
-// emitJSON writes v as indented JSON followed by a newline to w. It is the single
-// path every `--json`/report output goes through, so the stdout=data contract
-// (issue #27 §2) is enforced in one place: callers pass cmd.OutOrStdout() and keep
-// all human banners on stderr.
-func emitJSON(w io.Writer, v any) error {
-	data, err := json.MarshalIndent(v, "", "  ")
+// emitJSON writes v as JSON followed by a newline to w. It is the single path
+// every `--json`/report output goes through, so the stdout=data contract (issue
+// #27 §2) is enforced in one place: callers pass cmd.OutOrStdout() and keep all
+// human banners on stderr.
+//
+// compact selects the on-the-wire format without touching the shape: under
+// --quiet (machine mode) callers pass compact=true for single-line JSON that
+// costs an agent fewer tokens; the default human path passes false for the
+// indented form that stays readable in a terminal. Only whitespace differs, so
+// the schema golden (which pins the indented rendering) is unaffected.
+func emitJSON(w io.Writer, v any, compact bool) error {
+	var (
+		data []byte
+		err  error
+	)
+	if compact {
+		data, err = json.Marshal(v)
+	} else {
+		data, err = json.MarshalIndent(v, "", "  ")
+	}
 	if err != nil {
 		return fmt.Errorf("render JSON output: %w", err)
 	}

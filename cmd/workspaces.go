@@ -166,7 +166,7 @@ func runWorkspaces(opts workspacesOptions, out, errOut io.Writer) error {
 			return emitJSON(out, workspacesReport{
 				Version: workspacesReportVersion, Root: root,
 				Action: workspaceActionList, Pruned: false, Workspaces: nonNilWorkspaces(all),
-			})
+			}, opts.quiet)
 		}
 		if len(all) == 0 {
 			banner(errOut, "no snapshot workspaces under "+root)
@@ -212,7 +212,7 @@ func runPrune(opts workspacesOptions, root string, all []workspaceInfo, out, err
 		return emitJSON(out, workspacesReport{
 			Version: workspacesReportVersion, Root: root,
 			Action: workspaceActionPrune, Pruned: pruned, Workspaces: nonNilWorkspaces(matched),
-		})
+		}, opts.quiet)
 	}
 	return nil
 }

@@ -179,7 +179,7 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 	// multi-gitter failure, and it does not short-circuit the run — apply.Apply
 	// still executes so the operator/agent also gets the dry-run status digest.
 	if opts.planJSON {
-		if err := emitJSON(out, buildApplyPlan(sel, spec)); err != nil {
+		if err := emitJSON(out, buildApplyPlan(sel, spec), opts.quiet); err != nil {
 			return err
 		}
 	}

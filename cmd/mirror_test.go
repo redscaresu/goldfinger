@@ -153,6 +153,10 @@ func TestRunMirrorQuiet(t *testing.T) {
 		assert.Equal(t, "/tmp/ws", rep.Workspace)
 		assert.False(t, strings.HasPrefix(out.String(), "/tmp/ws\n"))
 		assert.Empty(t, errOut.String())
+		// Machine mode: the stdout report is compact (one line + newline), not the
+		// indented form — fewer tokens for the agent parsing it.
+		assert.Equal(t, 1, strings.Count(out.String(), "\n"), "quiet report stdout is single-line JSON")
+		assert.NotContains(t, out.String(), "\n  ")
 	})
 
 	t.Run("dry-run prints nothing — no workspace was created", func(t *testing.T) {
@@ -229,6 +233,31 @@ func TestRunMirrorReport(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &fromFile))
 		require.Len(t, fromFile.Repos, 1)
 		assert.Equal(t, branchStatusHas, fromFile.Repos[0].BranchStatus)
+	})
+
+	// The stdout report follows machine mode's compact format under --quiet, but
+	// the persisted report file is an artifact a human may open, so it stays
+	// indented regardless. Same shape on both sinks — only whitespace differs.
+	t.Run("quiet compacts stdout but the report file stays indented", func(t *testing.T) {
+		ws := t.TempDir()
+		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+		var out bytes.Buffer
+		err := runMirror(context.Background(), run, sel, ws, "tok", mirror.Options{Branch: "dev"},
+			reportOptions{toStdout: true, toFile: true, quiet: true}, &out, &bytes.Buffer{})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, strings.Count(out.String(), "\n"), "quiet stdout report is single-line")
+		assert.NotContains(t, out.String(), "\n  ", "quiet stdout report is not indented")
+
+		data, err := os.ReadFile(filepath.Join(ws, mirrorReportName))
+		require.NoError(t, err)
+		assert.Contains(t, string(data), "\n  ", "the persisted report file stays indented for humans")
+
+		// Same content regardless of format.
+		var fromStdout, fromFile mirrorReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &fromStdout))
+		require.NoError(t, json.Unmarshal(data, &fromFile))
+		assert.Equal(t, fromStdout, fromFile)
 	})
 
 	// Regression: --report-json and the bare workspace-path line both target

@@ -64,12 +64,27 @@ func TestJSONFlagIsANoOp(t *testing.T) {
 	assert.Equal(t, plain, withFlag)
 }
 
-func TestSchemaQuietIsANoOp(t *testing.T) {
+// TestSchemaQuietIsCompact proves --quiet switches schema's format, not its shape:
+// the indented default becomes single-line JSON (fewer tokens for an agent) that
+// still unmarshals to the same catalogue. schema is the largest machine payload,
+// so this is the biggest token saving in machine mode (WS4, issue #48).
+func TestSchemaQuietIsCompact(t *testing.T) {
 	plain, err := executeCmd(t, "", "schema")
 	require.NoError(t, err)
 	quiet, err := executeCmd(t, "", "schema", "--quiet")
 	require.NoError(t, err)
-	assert.Equal(t, plain, quiet)
+
+	// Compact: a single trailing newline and none of the indented form's
+	// two-space nesting, so it is genuinely one line on the wire.
+	assert.Equal(t, 1, strings.Count(quiet, "\n"), "compact JSON is one line + trailing newline")
+	assert.NotContains(t, quiet, "\n  ", "compact JSON carries no indentation")
+	assert.Less(t, len(quiet), len(plain), "compact JSON is smaller than the indented form")
+
+	// Same shape: both round-trip to an identical catalogue.
+	var plainCat, quietCat schemaCatalogue
+	require.NoError(t, json.Unmarshal([]byte(plain), &plainCat))
+	require.NoError(t, json.Unmarshal([]byte(quiet), &quietCat))
+	assert.Equal(t, plainCat, quietCat)
 }
 
 // TestSchemasMatchTheirStructs is the anti-drift core: for every Go struct that

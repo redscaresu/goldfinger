@@ -125,7 +125,7 @@ func runCheck(ctx context.Context, r repoResolver, sel models.Selection, o check
 		// Machine mode: the full report goes to stdout regardless of sync state, so
 		// an agent gets one parseable object either way. The exit code (below) still
 		// carries the domain signal, exactly as in human mode.
-		if err := emitJSON(out, buildCheckReport(o.name, diff, ownerTypeMoved, sel.OwnerType, liveOwnerType, inSync)); err != nil {
+		if err := emitJSON(out, buildCheckReport(o.name, diff, ownerTypeMoved, sel.OwnerType, liveOwnerType, inSync), o.quiet); err != nil {
 			return err
 		}
 		if inSync {

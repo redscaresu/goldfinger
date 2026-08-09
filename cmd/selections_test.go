@@ -47,7 +47,7 @@ func TestSelectionsJSON(t *testing.T) {
 	t.Run("empty registry is an empty list, not an error", func(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		var buf bytes.Buffer
-		require.NoError(t, emitSelectionsJSON(&buf, nil))
+		require.NoError(t, emitSelectionsJSON(&buf, nil, false))
 		var rep selectionsReport
 		require.NoError(t, json.Unmarshal(buf.Bytes(), &rep))
 		assert.Equal(t, selectionsReportVersion, rep.Version)
@@ -76,7 +76,7 @@ func TestSelectionsJSON(t *testing.T) {
 		require.NoError(t, err)
 
 		var buf bytes.Buffer
-		require.NoError(t, emitSelectionsJSON(&buf, names))
+		require.NoError(t, emitSelectionsJSON(&buf, names, false))
 		var rep selectionsReport
 		require.NoError(t, json.Unmarshal(buf.Bytes(), &rep))
 

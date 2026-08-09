@@ -25,7 +25,7 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().BoolP(quietFlagName, "q", false,
-		"silence human progress/decorations on stderr and keep stdout to the command's machine result")
+		"silence human progress/decorations on stderr and keep stdout to the command's machine result; JSON payloads are emitted compact (single-line) to cost an agent fewer tokens")
 	root.AddCommand(newSelectCmd(), newMirrorCmd(), newApplyCmd(), newCheckCmd(), newSelectionsCmd(), newDoctorCmd(), newGuideCmd(), newSchemaCmd(), newWorkspacesCmd())
 	return root
 }

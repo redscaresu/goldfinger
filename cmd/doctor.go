@@ -99,7 +99,7 @@ func runDoctor(ctx context.Context, deps doctorDeps, o doctorOpts, out, errOut i
 	checks := gatherDoctorChecks(ctx, deps)
 
 	if o.asJSON {
-		if err := emitJSON(out, doctorReport{Version: doctorReportVersion, Checks: checks}); err != nil {
+		if err := emitJSON(out, doctorReport{Version: doctorReportVersion, Checks: checks}, o.quiet); err != nil {
 			return err
 		}
 	} else if !o.quiet {

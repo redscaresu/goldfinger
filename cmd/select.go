@@ -164,7 +164,7 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 	}
 
 	if o.asJSON {
-		if err := emitJSON(out, selectJSONReport{SelectionPath: o.selectionPath, Selection: sel}); err != nil {
+		if err := emitJSON(out, selectJSONReport{SelectionPath: o.selectionPath, Selection: sel}, o.quiet); err != nil {
 			return err
 		}
 	} else if o.quiet {
