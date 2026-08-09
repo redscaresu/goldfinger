@@ -67,10 +67,15 @@ echo "==> building goldfinger"
 go build -o "$GF" ./cmd
 
 echo "==> select --topic $TOPIC (must isolate exactly $REPO)"
-"$GF" select --org "$OWNER" --topic "$TOPIC" --selection "$SELECTION" >/dev/null
+SELECT_JSON="$("$GF" select --org "$OWNER" --topic "$TOPIC" --selection "$SELECTION" --json)"
 count="$(jq '.repos | length' "$SELECTION")"
 [ "$count" = "1" ] || fail "expected 1 repo in selection, got $count"
 jq -e --arg n "$REPO" '.repos[0].name == $n' "$SELECTION" >/dev/null || fail "selection is not $REPO"
+# The repo-set digest (issue #48 WS6) must reach the real --json surface: a
+# 12-hex fingerprint on the wrapper. The hash math (order-independence, set-only)
+# is unit-tested; here we only lock that the built binary emits the field.
+echo "$SELECT_JSON" | jq -e '.digest | test("^[0-9a-f]{12}$")' >/dev/null \
+	|| fail "select --json did not emit a 12-hex digest"
 
 echo "==> mirror"
 "$GF" mirror --selection "$SELECTION" --workspace "$TMP/ws" >/dev/null

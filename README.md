@@ -150,11 +150,21 @@ goldfinger select --org mycompany --all-repos
   your stored login. The token value itself is never printed.
 - `--list` — echo every selected repo's full name on **stdout**, one per line.
   By default stdout stays **terse**: the repo count goes to stderr (`N repo(s)
-  written to …`) and the full list lives in the lockfile, so a large selection
-  doesn't dump one stdout line per repo onto a driving agent. Pass `--list` when
-  you want the names back on stdout, or `--json` for the full wrapper. (Behaviour
-  change: earlier versions printed the repo list on stdout by default; that echo
-  is now `--list`.)
+  written to … (digest <hash>)`) and the full list lives in the lockfile, so a
+  large selection doesn't dump one stdout line per repo onto a driving agent.
+  Pass `--list` when you want the names back on stdout, or `--json` for the full
+  wrapper. (Behaviour change: earlier versions printed the repo list on stdout by
+  default; that echo is now `--list`.)
+- **Selection digest.** Every `select` reports a short repo-set fingerprint — a
+  12-hex-char (48-bit) hash over the sorted repo full-names — on the stderr
+  `done` line (`… (digest <hash>)`) and, under `--json`, as a top-level `digest`
+  field. It covers the repo **set** only (order-independent; branch-presence and
+  provenance don't change it). It is a **change detector**, not a cryptographic
+  commitment: a *differing* digest means the repo set definitely changed, and a
+  *matching* one is strong (but, being truncated, not absolute) evidence the set
+  is unchanged. A driving agent can compare digests to spot "same N repos"
+  cheaply without reading the whole lockfile back. `selections` shows it as a
+  `DIGEST` column (and a `digest` field under `--json`).
 - Writes `goldfinger.selection`; the lockfile is plain JSON — inspect or diff it
   before mirroring/applying:
 
@@ -557,10 +567,10 @@ agents](#designed-for-agents-reducing-token-consumption).
 
 | Command | Flag | Payload |
 | ------- | ---- | ------- |
-| `select` | `--json` | `{selectionPath, selection}` — `selection` is the full lockfile object exactly as persisted (its own `version` field is the payload version). |
+| `select` | `--json` | `{selectionPath, selection, digest}` — `selection` is the full lockfile object exactly as persisted (its own `version` field is the payload version); `digest` is the short repo-set fingerprint (see [`select`](#goldfinger-select)). |
 | `doctor` | `--json` | `{version, checks:[{check, status, detail, fix?}]}` where `status` is `ok`/`info`/`warn`/`fail`. The token value is never included. See [`doctor`](#goldfinger-doctor). |
 | `check` | `--json` | `{version, name?, inSync, added, removed:[{repo,reason}], defaultBranchMoved:[{repo,from,to}], ownerTypeFlipped:{from,to}\|null}`. Exit code is unchanged (`0`/`1`/`2`). |
-| `selections` | `--json` | `{version, selections:[{name, path, owner, repoCount, resolvedAt}]}`; an unreadable entry carries an `error` field instead of being dropped; an empty registry is `selections: []`, not an error. |
+| `selections` | `--json` | `{version, selections:[{name, path, owner, repoCount, digest, resolvedAt}]}`; `digest` is the short repo-set fingerprint (readable entries only); an unreadable entry carries an `error` field instead of being dropped; an empty registry is `selections: []`, not an error. |
 | `workspaces` | `--json` | `{version, root, action, pruned, workspaces:[{path, purpose?, branch?, stamp?, owner?, sizeBytes, createdAt?, manifestPresent}]}` — `list` reports every snapshot, `prune` the matched subset (`pruned:true` once `--confirm` deleted them). See [`workspaces`](#goldfinger-workspaces). |
 | `mirror` | `--report-json` | `{version, workspace, owner, repoCount, branch?, repos:[…]}` (see [`mirror`](#goldfinger-mirror)). |
 | `apply` | `--plan-json` | `{version, dry_run, sign_mode, branch, pr_title, commit_message, pr_body_present, labels, reviewers, draft, batch_size, batch_pause, command_program, command_redacted, base_branch_source, repos:[{repo, base_branch_recorded}], repos_total}` — the invocation goldfinger will make, **not** the diff. See [`apply`](#goldfinger-apply). |

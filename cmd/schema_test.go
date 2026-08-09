@@ -188,7 +188,7 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 	}
 	samples := map[string]any{
 		"lockfile": sel,
-		"select":   selectJSONReport{SelectionPath: "goldfinger.selection", Selection: sel},
+		"select":   selectJSONReport{SelectionPath: "goldfinger.selection", Selection: sel, Digest: "0123456789ab"},
 		"check": checkReport{
 			Version: checkReportVersion, Name: "platform", InSync: false,
 			Added:              []string{"acme/new"},
@@ -200,7 +200,7 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 			Version: selectionsReportVersion,
 			Selections: []selectionEntryJSON{{
 				Name: "platform", Path: "/p", Owner: "acme",
-				RepoCount: &n, ResolvedAt: time.Now().UTC().Format(time.RFC3339),
+				RepoCount: &n, Digest: "0123456789ab", ResolvedAt: time.Now().UTC().Format(time.RFC3339),
 			}},
 		},
 		"doctor": doctorReport{

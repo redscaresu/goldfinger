@@ -112,6 +112,10 @@ type selectOpts struct {
 type selectJSONReport struct {
 	SelectionPath string           `json:"selectionPath"`
 	Selection     models.Selection `json:"selection"`
+	// Digest is the short repo-set fingerprint (issue #48 WS6): repo count plus a
+	// short hash over the sorted repo full-names. An agent can compare it to a
+	// later run's digest to confirm "same N repos" without diffing the full lockfile.
+	Digest string `json:"digest"`
 }
 
 // runSelect resolves the target repos, filters them, annotates the selected set
@@ -174,9 +178,12 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 	// contract). Otherwise stdout stays empty — the list is already in the
 	// lockfile and the count is on the stderr done() line — so an N-repo selection
 	// doesn't force a driving agent to read N lines it can get from the file.
+	// digest is the short repo-set fingerprint (issue #48 WS6): count is already
+	// len(selected); hash lets a later run confirm "same N repos" cheaply.
+	_, digest := selection.Digest(sel)
 	switch {
 	case o.asJSON:
-		if err := emitJSON(out, selectJSONReport{SelectionPath: o.selectionPath, Selection: sel}, o.quiet); err != nil {
+		if err := emitJSON(out, selectJSONReport{SelectionPath: o.selectionPath, Selection: sel, Digest: digest}, o.quiet); err != nil {
 			return err
 		}
 	case o.list:
@@ -186,7 +193,10 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 	case o.quiet:
 		fmt.Fprintln(out, o.selectionPath)
 	}
-	done(errOut, fmt.Sprintf("%d repo(s) written to %s", len(selected), o.selectionPath))
+	// The digest rides the done() line (stderr) after "written to <path>", so the
+	// existing "N repo(s) written to <path>" phrasing stays intact for humans and
+	// tests while adding the fingerprint an agent can note without re-reading.
+	done(errOut, fmt.Sprintf("%d repo(s) written to %s (digest %s)", len(selected), o.selectionPath, digest))
 	return nil
 }
 
