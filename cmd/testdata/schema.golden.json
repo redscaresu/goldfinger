@@ -533,6 +533,9 @@
       "additionalProperties": false,
       "description": "The wrapper select --json emits: the on-disk path plus the full lockfile.",
       "properties": {
+        "digest": {
+          "type": "string"
+        },
         "selection": {
           "additionalProperties": false,
           "properties": {
@@ -640,7 +643,8 @@
       },
       "required": [
         "selectionPath",
-        "selection"
+        "selection",
+        "digest"
       ],
       "title": "select --json",
       "type": "object"
@@ -654,6 +658,9 @@
           "items": {
             "additionalProperties": false,
             "properties": {
+              "digest": {
+                "type": "string"
+              },
               "error": {
                 "type": "string"
               },

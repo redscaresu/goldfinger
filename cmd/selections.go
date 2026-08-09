@@ -30,7 +30,12 @@ type selectionEntryJSON struct {
 	Owner      string `json:"owner,omitempty"`
 	RepoCount  *int   `json:"repoCount"`
 	ResolvedAt string `json:"resolvedAt,omitempty"`
-	Error      string `json:"error,omitempty"`
+	// Digest is the short repo-set fingerprint (issue #48 WS6): with repoCount it
+	// lets an agent confirm two selections cover the same repos without reading
+	// each lockfile back. Present only for a readable entry (omitempty), mirroring
+	// owner/resolvedAt; an unreadable entry carries error instead.
+	Digest string `json:"digest,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 type selectionsOptions struct {
@@ -76,7 +81,7 @@ func renderSelectionsTable(out, errOut io.Writer, names []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tOWNER\tREPOS\tRESOLVED")
+	fmt.Fprintln(tw, "NAME\tOWNER\tREPOS\tDIGEST\tRESOLVED")
 	for _, n := range names {
 		path, err := selection.PathForName(n)
 		if err != nil {
@@ -84,10 +89,11 @@ func renderSelectionsTable(out, errOut io.Writer, names []string) error {
 		}
 		sel, err := selection.Read(path)
 		if err != nil {
-			fmt.Fprintf(tw, "%s\t(unreadable)\t\t\n", n)
+			fmt.Fprintf(tw, "%s\t(unreadable)\t\t\t\n", n)
 			continue
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", n, sel.Owner, len(sel.Repos), sel.ResolvedAt.Format("2006-01-02"))
+		_, digest := selection.Digest(sel)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", n, sel.Owner, len(sel.Repos), digest, sel.ResolvedAt.Format("2006-01-02"))
 	}
 	return tw.Flush()
 }
@@ -119,6 +125,7 @@ func emitSelectionsJSON(out io.Writer, names []string, quiet bool) error {
 		entry.Owner = sel.Owner
 		n := len(sel.Repos)
 		entry.RepoCount = &n
+		_, entry.Digest = selection.Digest(sel)
 		entry.ResolvedAt = sel.ResolvedAt.Format(time.RFC3339)
 		rep.Selections = append(rep.Selections, entry)
 	}

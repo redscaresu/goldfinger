@@ -89,10 +89,17 @@ func TestSelectionsJSON(t *testing.T) {
 		require.NotNil(t, byName["platform"].RepoCount, "a readable entry always carries repoCount")
 		assert.Equal(t, 2, *byName["platform"].RepoCount)
 		assert.Empty(t, byName["platform"].Error)
+		// A readable entry carries the repo-set digest (issue #48 WS6) so an agent
+		// can compare selections without reading each lockfile; it matches Digest.
+		_, wantDigest := selection.Digest(models.Selection{
+			Repos: []models.Repo{{Owner: "acme", Name: "a"}, {Owner: "acme", Name: "b"}},
+		})
+		assert.Equal(t, wantDigest, byName["platform"].Digest)
 
 		require.Contains(t, byName, "broken")
 		assert.NotEmpty(t, byName["broken"].Error, "unreadable entry carries an error, not dropped")
 		assert.Nil(t, byName["broken"].RepoCount, "an unreadable entry has null repoCount, distinguishing it from a zero-repo selection")
+		assert.Empty(t, byName["broken"].Digest, "an unreadable entry has no digest — it carries error instead")
 	})
 }
 

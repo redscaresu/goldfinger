@@ -200,7 +200,8 @@ func selectReportSchemaObj() map[string]any {
 	return object(map[string]any{
 		"selectionPath": str(),
 		"selection":     selectionSchemaObj(),
-	}, "selectionPath", "selection")
+		"digest":        str(),
+	}, "selectionPath", "selection", "digest")
 }
 
 func checkReportSchemaObj() map[string]any {
@@ -251,6 +252,7 @@ func selectionEntrySchemaObj() map[string]any {
 		"owner":      str(),
 		"repoCount":  nullable(integer()),
 		"resolvedAt": dateTime(),
+		"digest":     str(),
 		"error":      str(),
 	}, "name", "path", "repoCount")
 }

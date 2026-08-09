@@ -44,7 +44,13 @@ WORKFLOW
      Writes ./goldfinger.selection (JSON: owner/name list + provenance). --org
      accepts a GitHub org OR user. stdout is terse by default — the count is on
      stderr and the full list is in the lockfile; add --list to echo every repo's
-     full name on stdout, or --json for the full wrapper.
+     full name on stdout, or --json for the full wrapper. The stderr done line
+     ends with "(digest <hash>)": a short repo-set fingerprint (12 hex chars /
+     48 bits over the sorted repo full-names, order-independent, set-only). It's
+     a change detector, not a proof: a differing digest means the set definitely
+     changed; a matching one is strong (truncated, so not absolute) evidence it's
+     unchanged — a cheap check without diffing the lockfile. --json surfaces it
+     as a top-level `digest`; `selections` shows it as a DIGEST column.
 
      If you plan to `mirror --branch <b>` (e.g. dev), add `--branch-presence <b>`
      here so goldfinger records (read-only) which repos actually have that branch
@@ -274,7 +280,7 @@ MACHINE-READABLE OUTPUT
   every JSON payload compact (single-line) rather than indented, so an agent
   parsing it spends fewer tokens. The default (no --quiet) stays pretty-printed
   for a human terminal. Only whitespace differs — the shape is identical.
-       goldfinger select --json ...   -> {selectionPath, selection:{…lockfile…}}
+       goldfinger select --json ...   -> {selectionPath, selection:{…lockfile…}, digest}
        goldfinger doctor --json       -> {version, checks:[{check, status, detail, fix}]}
        goldfinger check --json        -> {version, inSync, added, removed, …}
        goldfinger selections --json   -> {version, selections:[{name, owner, …}]}

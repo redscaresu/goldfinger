@@ -175,8 +175,16 @@ func TestRunSelectJSON(t *testing.T) {
 	assert.Equal(t, onDisk.Owner, rep.Selection.Owner)
 	assert.Equal(t, onDisk.Repos, rep.Selection.Repos)
 
-	// Human banners stay on stderr.
+	// The wrapper carries the repo-set digest (issue #48 WS6): a machine consumer
+	// gets the fingerprint alongside the selection without recomputing it, and it
+	// matches selection.Digest over the same repos.
+	_, wantDigest := selection.Digest(onDisk)
+	assert.Equal(t, wantDigest, rep.Digest)
+	assert.NotEmpty(t, rep.Digest)
+
+	// Human banners stay on stderr, and the digest rides that line too.
 	assert.Contains(t, errOut.String(), "1 repo(s) written")
+	assert.Contains(t, errOut.String(), "digest "+wantDigest)
 	assert.NotContains(t, out.String(), "written to")
 }
 
