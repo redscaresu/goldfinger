@@ -72,11 +72,17 @@ WORKFLOW
      are present. "in selection" is the lockfile count; "on disk" is a read-only
      count of how many of those repos actually landed under <workspace>/<owner>
      (no git). If on disk < in selection, goldfinger warns (⚠) that the mirror
-     under-covered the selection — scroll up for ghorg's clone errors, then
-     re-run. With --branch, "branch present"/"fell back" (and "unknown", when
-     any) explain ghorg's per-repo "Could not checkout <branch>" lines as
-     expected fall-backs, not failures — same facts as the --report-json
-     branchStatus below.
+     under-covered the selection. With --branch, "branch present"/"fell back"
+     (and "unknown", when any) explain ghorg's per-repo "Could not checkout
+     <branch>" lines as expected fall-backs, not failures — same facts as the
+     --report-json branchStatus below.
+
+     ghorg's output still streams live to stderr, but goldfinger also captures
+     the full run to a 0600 temp log and prints its path
+       ✓ ghorg output captured at /var/folders/.../goldfinger-mirror-output-*.log
+     so you can drill into clone errors behind a shortfall without scrolling
+     back (on a failed mirror the same path is surfaced with ⚠). Under --quiet
+     the output is discarded — no live stream, no log.
 
      Pass --branch <name> to check out a specific branch in every clone instead
      of each repo's default. It is ONE name applied to all repos: ghorg leaves a
@@ -285,7 +291,7 @@ MACHINE-READABLE OUTPUT
        goldfinger check --json        -> {version, inSync, added, removed, …}
        goldfinger selections --json   -> {version, selections:[{name, owner, …}]}
        goldfinger workspaces list --json -> {version, root, action, workspaces:[…]}
-       goldfinger mirror --report-json -> {version, workspace, owner, repos, …}
+       goldfinger mirror --report-json -> {version, workspace, owner, reconciliation:{inSelection, onDisk, notOnDisk, branch?}, repos, …}
        goldfinger apply --plan-json ... -> {version, dry_run, sign_mode, repos, …}
        goldfinger guide --json        -> {version, commands:[{name, flags, …}]}
        goldfinger schema              -> {version, schemas:{lockfile, check, …}}

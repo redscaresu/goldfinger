@@ -180,13 +180,20 @@ func TestBuildMirrorReportCategorises(t *testing.T) {
 			{Owner: "acme", Name: "never-checked", DefaultBranch: "main"}, // no BranchPresence -> unknown
 		},
 	}
-	rep := buildMirrorReport(sel, "/tmp/ws", mirror.Options{Branch: "dev"})
+	rec := reconcile(sel, "/tmp/ws", mirror.Options{Branch: "dev"})
+	rep := buildMirrorReport(sel, "/tmp/ws", mirror.Options{Branch: "dev"}, rec)
 
 	assert.Equal(t, "/tmp/ws", rep.Workspace)
 	assert.Equal(t, "acme", rep.Owner)
 	assert.Equal(t, 4, rep.RepoCount)
 	assert.Equal(t, "dev", rep.Branch)
 	assert.NotEmpty(t, rep.BranchFactsNote, "a requested branch carries the drift caveat")
+	// Reconciliation rides the report (WS3): 4 selected, none on the fake /tmp/ws,
+	// and a branch was requested so the branch tallies are attached (sum to 4).
+	assert.Equal(t, 4, rep.Reconciliation.InSelection)
+	assert.Equal(t, 4, rep.Reconciliation.NotOnDisk)
+	require.NotNil(t, rep.Reconciliation.Branch, "a requested branch attaches the branch tallies")
+	assert.Equal(t, 4, rep.Reconciliation.Branch.Present+rep.Reconciliation.Branch.FellBack+rep.Reconciliation.Branch.Unknown)
 
 	status := map[string]string{}
 	for _, r := range rep.Repos {
@@ -200,12 +207,18 @@ func TestBuildMirrorReportCategorises(t *testing.T) {
 
 func TestBuildMirrorReportNoBranch(t *testing.T) {
 	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a", DefaultBranch: "main"}}}
-	rep := buildMirrorReport(sel, "/tmp/ws", mirror.Options{})
+	rec := reconcile(sel, "/tmp/ws", mirror.Options{})
+	rep := buildMirrorReport(sel, "/tmp/ws", mirror.Options{}, rec)
 
 	assert.Empty(t, rep.Branch)
 	assert.Empty(t, rep.BranchFactsNote, "no requested branch, no branch caveat")
 	require.Len(t, rep.Repos, 1)
 	assert.Equal(t, branchStatusDefault, rep.Repos[0].BranchStatus)
+	// No --branch, so the reconciliation carries no branch object — the coverage
+	// counts are still present (1 selected, 0 on the fake path → notOnDisk 1).
+	assert.Nil(t, rep.Reconciliation.Branch, "a no-branch mirror attaches no branch tallies")
+	assert.Equal(t, 1, rep.Reconciliation.InSelection)
+	assert.Equal(t, 1, rep.Reconciliation.NotOnDisk)
 }
 
 func TestRunMirrorReport(t *testing.T) {
@@ -299,6 +312,53 @@ func TestRunMirrorReport(t *testing.T) {
 		assert.Empty(t, out.String(), "a dry-run clones nothing, so it emits no stdout report")
 		_, statErr := os.Stat(filepath.Join(ws, mirrorReportName))
 		assert.True(t, os.IsNotExist(statErr), "a dry-run must not write a report file")
+	})
+
+	// The reconciliation block in --report-json must reflect what actually landed
+	// on disk (a read-only stat), not a static echo of the selection — that honest
+	// coverage count is the whole point of WS3.
+	t.Run("report reconciliation reflects on-disk reality", func(t *testing.T) {
+		ws := t.TempDir()
+		mkRepoDirs(t, ws, "acme", "svc") // the one selected repo lands on disk
+		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+		var out, errOut bytes.Buffer
+		err := runMirror(context.Background(), run, sel, ws, "tok", mirror.Options{Branch: "dev"},
+			reportOptions{toStdout: true}, &out, &errOut)
+		require.NoError(t, err)
+
+		var rep mirrorReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+		assert.Equal(t, 1, rep.Reconciliation.InSelection)
+		assert.Equal(t, 1, rep.Reconciliation.OnDisk)
+		assert.Equal(t, 0, rep.Reconciliation.NotOnDisk)
+		// The human reconciliation line lands on stderr and reads as a success.
+		assert.Contains(t, errOut.String(), "reconciliation: in selection: 1 | on disk: 1")
+		assert.NotContains(t, errOut.String(), "under-covered")
+	})
+}
+
+func TestRunMirrorSurfacesGhorgLogPath(t *testing.T) {
+	sel := models.Selection{Owner: "acme", OwnerType: models.OwnerUser, Repos: []models.Repo{{Owner: "acme", Name: "svc"}}}
+	const logPath = "/tmp/goldfinger-mirror-output-abc.log"
+
+	t.Run("on success the captured log path is announced", func(t *testing.T) {
+		ws := t.TempDir()
+		mkRepoDirs(t, ws, "acme", "svc")
+		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+		var errOut bytes.Buffer
+		err := runMirror(context.Background(), run, sel, ws, "tok", mirror.Options{},
+			reportOptions{ghorgLogPath: logPath}, &bytes.Buffer{}, &errOut)
+		require.NoError(t, err)
+		assert.Contains(t, errOut.String(), "ghorg output captured at "+logPath)
+	})
+
+	t.Run("on failure the captured log path is surfaced for drill-down", func(t *testing.T) {
+		run := func(_ context.Context, _ string, _, _ []string) error { return errors.New("boom") }
+		var errOut bytes.Buffer
+		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{},
+			reportOptions{ghorgLogPath: logPath}, &bytes.Buffer{}, &errOut)
+		require.Error(t, err)
+		assert.Contains(t, errOut.String(), "ghorg output (incl. errors) captured at "+logPath)
 	})
 }
 

@@ -79,19 +79,40 @@ func (r reconciliation) shortfall() int {
 	return r.inSelection - r.onDisk
 }
 
-// reportReconciliation prints goldfinger's authoritative post-mirror summary to
-// errOut (stderr — stdout stays reserved for the path/JSON). It is skipped on a
-// dry-run, which clones nothing, so an on-disk count of 0 would be misleading.
-// A full mirror reads as a success line; a shortfall is flagged as a warning
-// pointing back at ghorg's own output for the underlying clone errors.
-func reportReconciliation(errOut io.Writer, sel models.Selection, ws string, opts mirror.Options) {
-	if opts.DryRun {
-		return
+// toReport maps the internal counts onto the JSON reconciliation surface (issue
+// #48 WS3). notOnDisk is the shortfall (the honest "failed to land" count); the
+// branch tallies are attached only when a --branch was requested, so a no-branch
+// mirror's report carries no branch object rather than a block of ambiguous zeros.
+func (r reconciliation) toReport() mirrorReconciliation {
+	out := mirrorReconciliation{
+		InSelection: r.inSelection,
+		OnDisk:      r.onDisk,
+		NotOnDisk:   r.shortfall(),
 	}
-	rec := reconcile(sel, ws, opts)
+	if r.hasBranch {
+		out.Branch = &mirrorBranchReconciliation{
+			Present:  r.branchPresent,
+			FellBack: r.fellBack,
+			Unknown:  r.unknown,
+		}
+	}
+	return out
+}
+
+// reportReconciliation prints goldfinger's authoritative post-mirror summary to
+// errOut (stderr — stdout stays reserved for the path/JSON) from a precomputed
+// reconciliation, so the caller can share the one filesystem stat with the JSON
+// report. A full mirror reads as a success line; a shortfall is flagged as a
+// warning pointing at the captured ghorg log (logPath, "" if none) for the
+// underlying clone errors.
+func reportReconciliation(errOut io.Writer, rec reconciliation, ws, owner, logPath string) {
 	if n := rec.shortfall(); n > 0 {
+		hint := "re-run mirror, or check ghorg's output above for clone errors"
+		if logPath != "" {
+			hint = "re-run mirror, or check the captured ghorg log for clone errors: " + logPath
+		}
 		warn(errOut, "reconciliation: "+rec.line())
-		warn(errOut, fmt.Sprintf("%d selected repo(s) are not on disk under %s/%s — the mirror under-covered the selection; re-run mirror, or check ghorg's output above for clone errors", n, ws, sel.Owner))
+		warn(errOut, fmt.Sprintf("%d selected repo(s) are not on disk under %s/%s — the mirror under-covered the selection; %s", n, ws, owner, hint))
 		return
 	}
 	done(errOut, "reconciliation: "+rec.line())

@@ -312,8 +312,26 @@ func mirrorReportSchemaObj() map[string]any {
 		"repoCount":       integer(),
 		"branch":          str(),
 		"branchFactsNote": str(),
+		"reconciliation":  mirrorReconciliationSchemaObj(),
 		"repos":           arrayOf(mirrorRepoInfoSchemaObj()),
-	}, "version", "workspace", "owner", "repoCount", "repos")
+	}, "version", "workspace", "owner", "repoCount", "reconciliation", "repos")
+}
+
+func mirrorReconciliationSchemaObj() map[string]any {
+	return object(map[string]any{
+		"inSelection": integer(),
+		"onDisk":      integer(),
+		"notOnDisk":   integer(),
+		"branch":      mirrorBranchReconciliationSchemaObj(),
+	}, "inSelection", "onDisk", "notOnDisk")
+}
+
+func mirrorBranchReconciliationSchemaObj() map[string]any {
+	return object(map[string]any{
+		"present":  integer(),
+		"fellBack": integer(),
+		"unknown":  integer(),
+	}, "present", "fellBack", "unknown")
 }
 
 func mirrorRepoInfoSchemaObj() map[string]any {
