@@ -24,6 +24,7 @@ const (
 	schemaCatalogueVersion   = 1
 	workspacesReportVersion  = 1
 	workspaceManifestVersion = 1
+	errorReportVersion       = 1
 )
 
 // emitJSON writes v as JSON followed by a newline to w. It is the single path

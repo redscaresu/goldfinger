@@ -558,7 +558,7 @@ agents](#designed-for-agents-reducing-token-consumption).
 | `mirror` | `--report-json` | `{version, workspace, owner, repoCount, branch?, repos:[…]}` (see [`mirror`](#goldfinger-mirror)). |
 | `apply` | `--plan-json` | `{version, dry_run, sign_mode, branch, pr_title, commit_message, pr_body_present, labels, reviewers, draft, batch_size, batch_pause, command_program, command_redacted, base_branch_source, repos:[{repo, base_branch_recorded}], repos_total}` — the invocation goldfinger will make, **not** the diff. See [`apply`](#goldfinger-apply). |
 | `guide` | `--json` | `{version, commands:[{name, summary, requiredFlags, flags:[{name, usage, required, values?, default?}], example, notes?}]}` — a machine-consumable catalogue of the CLI surface, so an agent can discover every command, its flags, which are required, a flag's enum values, and a canonical example without parsing the prose playbook. Command names, flag names, and usage text are derived from the live command tree; requiredness, enum values, notes, and the example are curated and kept in sync with the validators by tests. |
-| `schema` | *(always JSON)* | `{version, schemas:{lockfile, select, check, selections, doctor, apply-plan, mirror-report, capabilities, workspaces, workspace-manifest}}` — the [JSON Schema](https://json-schema.org/) (draft 2020-12) for the lockfile and every *other* payload in this table, so a consumer can **validate** goldfinger's output rather than infer its shape. Read-only and offline: no token, no network, no git. The schemas are hand-authored but pinned to the Go types by a golden test and a reflection test, so they cannot silently drift. Where `guide --json` describes the *input* surface, `schema` describes the *output* surface. |
+| `schema` | *(always JSON)* | `{version, schemas:{lockfile, select, check, selections, doctor, apply-plan, mirror-report, capabilities, workspaces, workspace-manifest, error}}` — the [JSON Schema](https://json-schema.org/) (draft 2020-12) for the lockfile and every *other* payload in this table (including the machine-mode `error` object below), so a consumer can **validate** goldfinger's output rather than infer its shape. Read-only and offline: no token, no network, no git. The schemas are hand-authored but pinned to the Go types by a golden test and a reflection test, so they cannot silently drift. Where `guide --json` describes the *input* surface, `schema` describes the *output* surface. |
 
 Each payload carries an explicit top-level `version` so consumers can branch on
 shape across releases — the sole exception is `select --json`, whose version is
@@ -585,6 +585,16 @@ all-clear from a failed check from a doctor that couldn't run. A wrong or
 empty-result token trips `2`, never a false "in sync": `select` treats a
 zero-repo match as an error (pass `--allow-empty` for the rare intended case)
 rather than silently freezing an empty fleet.
+
+**Failures are one parseable line, never a stack dump.** A genuine error is
+always collapsed to a single line on stderr — even when a child tool's message
+spanned several — so an agent never has to sift a traceback. In the human
+default that line is `Error: <message>`; under `--quiet` it is instead the
+compact machine object `{"version":1,"error":"<message>","exitCode":<n>}` (the
+`error` surface in [`schema`](#goldfinger-schema)), so a machine reads one JSON
+value plus the exit code. A domain-signal exit (drift `1`, a failed `doctor`
+check) prints nothing — its report already went to stdout and the code carries
+the signal — so a quiet run's stderr is empty unless something actually broke.
 
 ## Designed for agents: reducing token consumption
 
