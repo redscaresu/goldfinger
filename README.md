@@ -387,7 +387,8 @@ apply-time signal.)
   the PR body is reduced to `pr_body_present` (a boolean). `--plan-json`
   **supplements** the dry-run — it does not replace it: goldfinger still runs
   multi-gitter's `--dry-run` so you get both the plan (stdout) and the status
-  digest plus full-output file path (stderr). `base_branch_recorded` is the value
+  digest plus full-output file path (stderr — under `--quiet` the plan keeps
+  stdout and the digest is suppressed). `base_branch_recorded` is the value
   **recorded at selection time**;
   with no `--base-branch`, multi-gitter targets each repo's *live* default at run
   time, which can drift (same caveat the dry-run banner prints) — the guarantee

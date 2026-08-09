@@ -139,6 +139,17 @@ func TestRunApplyQuiet(t *testing.T) {
 		assert.Empty(t, errOut.String())
 		assert.NotContains(t, out.String(), "dry-run:")
 	})
+
+	t.Run("live run emits nothing — the digest only ever reaches stdout for a dry-run", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir())
+		live := spec
+		live.DryRun = false
+		live.Confirm = true // Apply refuses a live run that isn't confirmed
+		var out, errOut bytes.Buffer
+		require.NoError(t, runApply(context.Background(), run, sel, live, "tok", applyOutputOptions{quiet: true}, &out, &errOut))
+		assert.Empty(t, out.String(), "a live run has no dry-run digest, so quiet stdout stays empty")
+		assert.Empty(t, errOut.String())
+	})
 }
 
 func fullRunOutputPath(t *testing.T, output string) string {

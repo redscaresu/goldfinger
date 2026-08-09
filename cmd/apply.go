@@ -129,7 +129,7 @@ func newApplyCmd() *cobra.Command {
 	f.BoolVar(&confirm, "confirm", false, "required alongside --dry-run=false to actually open PRs")
 	f.IntVar(&batchSize, "batch-size", 0, "open PRs in batches of this many repos to stay under GitHub rate limits (0 = one run over the whole selection)")
 	f.DurationVar(&batchPause, "batch-pause", 0, "pause between batches, e.g. 60s (only used with --batch-size)")
-	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run status digest on stderr")
+	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run status digest (on stderr; suppressed under --quiet, where the plan owns stdout)")
 	return cmd
 }
 
@@ -143,8 +143,9 @@ type applyOutputOptions struct {
 //
 // When planJSON is set, the machine-readable plan (what goldfinger will invoke) is
 // written to out (stdout) before delegating — it supplements, and never replaces,
-// the dry-run status digest on stderr. It is not a metadata-only short-circuit:
-// apply.Apply still runs.
+// the dry-run status digest (on stderr normally; relocated to stdout under
+// --quiet, or suppressed when --quiet and --plan-json both claim stdout). It is
+// not a metadata-only short-circuit: apply.Apply still runs.
 func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec models.ApplySpec, token string, opts applyOutputOptions, out, errOut io.Writer) error {
 	errOut = quietWriter(errOut, opts.quiet)
 	mode := "LIVE — opening PRs"
