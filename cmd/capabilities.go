@@ -111,6 +111,7 @@ var curatedCapabilities = map[string]curatedCommand{
 		notes: []string{
 			"a script command is required after -- (e.g. -- sed -i ...)",
 			"apply defaults to a dry-run; a real run additionally requires --dry-run=false AND --confirm",
+			"dry-run prints a per-repo status digest (would-change, no-change, error) and a full-output temp file path; multi-gitter's non-interactive dry-run does not emit a diff",
 			"--pr-body and --pr-body-file are mutually exclusive",
 			nameSelectionExclusiveNote,
 			nameShapeNote,

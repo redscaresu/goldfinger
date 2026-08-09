@@ -6,10 +6,9 @@ import (
 
 // applyPlan is the --plan-json payload for apply (issue #27 §3): a machine-readable
 // summary of *what goldfinger is about to invoke*, not the resulting diff.
-// goldfinger delegates clone/script/diff to multi-gitter and only receives the
-// child's exit status, so the plan deliberately carries only the invocation
-// metadata goldfinger controls — never per-repo changed flags or a diffstat, which
-// it cannot know without reimplementing git.
+// goldfinger delegates clone/script/diff to multi-gitter, so the plan deliberately
+// carries only the invocation metadata goldfinger controls — never a diff or
+// diffstat, which it cannot know without reimplementing git.
 //
 // Two safety choices are baked into the shape:
 //   - CommandProgram is argv[0] only, with CommandRedacted=true: the operator's

@@ -104,7 +104,7 @@ func newApplyCmd() *cobra.Command {
 				BatchSize:     batchSize,
 				BatchPause:    batchPause,
 			}
-			return runApply(cmd.Context(), execRun, sel, spec, token, planJSON, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runApply(cmd.Context(), execApplyRun, sel, spec, token, planJSON, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	addSelectionFlags(cmd, &name, &selectionPath)
@@ -123,7 +123,7 @@ func newApplyCmd() *cobra.Command {
 	f.BoolVar(&confirm, "confirm", false, "required alongside --dry-run=false to actually open PRs")
 	f.IntVar(&batchSize, "batch-size", 0, "open PRs in batches of this many repos to stay under GitHub rate limits (0 = one run over the whole selection)")
 	f.DurationVar(&batchPause, "batch-pause", 0, "pause between batches, e.g. 60s (only used with --batch-size)")
-	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run diff on stderr")
+	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run status digest on stderr")
 	return cmd
 }
 
@@ -132,8 +132,8 @@ func newApplyCmd() *cobra.Command {
 //
 // When planJSON is set, the machine-readable plan (what goldfinger will invoke) is
 // written to out (stdout) before delegating — it supplements, and never replaces,
-// multi-gitter's own dry-run diff (which execRun streams to stderr). It is not a
-// metadata-only short-circuit: apply.Apply still runs.
+// the dry-run status digest on stderr. It is not a metadata-only short-circuit:
+// apply.Apply still runs.
 func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec models.ApplySpec, token string, planJSON bool, out, errOut io.Writer) error {
 	mode := "LIVE — opening PRs"
 	if spec.DryRun {
@@ -164,17 +164,81 @@ func runApply(ctx context.Context, run apply.Runner, sel models.Selection, spec 
 	// The plan goes to stdout (banners above went to stderr) so an agent can parse
 	// it cleanly. It is emitted before delegating so it survives a later
 	// multi-gitter failure, and it does not short-circuit the run — apply.Apply
-	// still executes so the operator/agent also gets the authorization dry-run diff.
+	// still executes so the operator/agent also gets the dry-run status digest.
 	if planJSON {
 		if err := emitJSON(out, buildApplyPlan(sel, spec)); err != nil {
 			return err
 		}
 	}
-	if err := apply.Apply(ctx, run, sel, spec, token); err != nil {
+	result, err := apply.Apply(ctx, run, sel, spec, token)
+	if spec.DryRun {
+		if digestErr := printDryRunDigest(errOut, sel.Repos, result.Output); digestErr != nil {
+			if err != nil {
+				return errors.Join(err, digestErr)
+			}
+			return digestErr
+		}
+	}
+	if err != nil {
 		return err
 	}
 	done(errOut, "apply complete")
 	return nil
+}
+
+func printDryRunDigest(w io.Writer, repos []models.Repo, output []byte) error {
+	digest := apply.SummarizeDryRunOutput(repos, output)
+	repoWord := "repos"
+	if digest.RepoCount == 1 {
+		repoWord = "repo"
+	}
+	errorWord := "errors"
+	if digest.Errored == 1 {
+		errorWord = "error"
+	}
+	fmt.Fprintf(w, "dry-run: %d %s — %d would change, %d no-change, %d %s",
+		digest.RepoCount, repoWord, digest.Changed, digest.Unchanged, digest.Errored, errorWord)
+	if unknown := digest.RepoCount - digest.Changed - digest.Unchanged - digest.Errored; unknown > 0 {
+		fmt.Fprintf(w, ", %d unknown", unknown)
+	}
+	fmt.Fprintln(w)
+	for _, repo := range digest.Repos {
+		if repo.Status == apply.DryRunError && repo.Detail != "" {
+			fmt.Fprintf(w, "  %s   %s: %s\n", repo.Repo, repo.Status, repo.Detail)
+			continue
+		}
+		fmt.Fprintf(w, "  %s   %s\n", repo.Repo, repo.Status)
+	}
+
+	path, err := writeFullRunOutput(output)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "full run output: %s\n", path)
+	return nil
+}
+
+func writeFullRunOutput(output []byte) (string, error) {
+	f, err := os.CreateTemp("", "goldfinger-apply-output-*.log")
+	if err != nil {
+		return "", fmt.Errorf("create full run output file: %w", err)
+	}
+	path := f.Name()
+	if _, err := f.Write(output); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("write full run output: %w", err)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("secure full run output perms: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close full run output: %w", err)
+	}
+	return path, nil
 }
 
 // signTrust renders the signing mode and its trust model for the dry-run banner,

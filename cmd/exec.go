@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +24,34 @@ func execRun(ctx context.Context, name string, args, env []string) error {
 	c.Stderr = os.Stderr
 	c.Stdin = os.Stdin
 	return c.Run()
+}
+
+// execApplyRun is the apply-specific runner. Dry-runs are captured so goldfinger
+// can summarize multi-gitter's final repo counter block while still teeing live
+// progress to stderr. Live applies keep the existing streaming path.
+func execApplyRun(ctx context.Context, name string, args, env []string) ([]byte, error) {
+	if !hasArg(args, "--dry-run") {
+		return nil, execRun(ctx, name, args, env)
+	}
+
+	var buf bytes.Buffer
+	w := io.MultiWriter(os.Stderr, &buf)
+	c := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: see execRun — controlled delegate invocation, not external input.
+	c.Env = env
+	c.Stdout = w
+	c.Stderr = w
+	c.Stdin = os.Stdin
+	err := c.Run()
+	return buf.Bytes(), err
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
 
 // requireTool fails with an install hint if the named CLI is not on PATH. Both

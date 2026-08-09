@@ -132,7 +132,10 @@ WORKFLOW
      independent of step 2 — you can apply without ever running mirror. It
      branches from the base branch's LIVE HEAD at apply time, not the SHA you
      mirrored in step 2 — so always --dry-run first (it clones fresh too) to see
-     the real diff rather than trusting the snapshot you inspected.
+     which repos would change, report no change, or error rather than trusting
+     the snapshot you inspected. Non-interactive multi-gitter dry-run does NOT
+     emit a unified diff; goldfinger prints a status digest plus a full-output
+     file path.
      With --base-branch omitted, each PR targets that repo's own default branch,
      so a mixed dev/main selection routes correctly per repo.
 
@@ -232,13 +235,14 @@ WORKSPACE LIFECYCLE (workspaces list | prune)
   default branch only) is the size lever; omit it for a full clone.
 
 SAFETY — READ THIS
-  - `apply` defaults to --dry-run: it shows the planned change and opens NOTHING.
+  - `apply` defaults to --dry-run: it prints a per-repo status digest and opens NOTHING.
   - A real run needs BOTH --dry-run=false AND --confirm. This is deliberate.
   - If you are an AI agent: never run a real (non-dry-run) apply on your own
     initiative. When the human has explicitly authorized this fleet change, you
-    may run it — but dry-run first, present the diff, prefer --draft (PRs open
-    not-ready-for-review), and pass --dry-run=false --confirm. Otherwise present
-    the dry-run result and let the human run the real apply themselves.
+    may run it — but dry-run first, present the status digest, prefer --draft
+    (PRs open not-ready-for-review), and pass --dry-run=false --confirm.
+    Otherwise present the dry-run result and let the human run the real apply
+    themselves.
   - --sign is required on every run: pass it explicitly and state which trust
     model you used (local = your GPG key, github = GitHub's key, none = unsigned)
     when you present the dry-run or a real run.
@@ -285,7 +289,8 @@ MACHINE-READABLE OUTPUT
   describes the INPUT surface, schema describes the OUTPUT surface.
   apply --plan-json emits the INVOCATION plan (not the diff; command redacted to
   argv[0], body as a presence bool) on stdout and STILL runs multi-gitter's
-  dry-run — you get both the plan and the real diff (on stderr).
+  dry-run — you get both the plan and the status digest plus full-output file
+  path (on stderr).
   Each payload carries a top-level `version` for shape-stability, except
   `select --json` whose version is the nested selection.version (the lockfile
   version), so the nested object stays identical to goldfinger.selection on disk.

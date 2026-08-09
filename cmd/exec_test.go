@@ -54,6 +54,44 @@ func TestExecRunRoutesChildStdoutToStderr(t *testing.T) {
 	assert.Contains(t, string(gotErr), "child-stdout", "child stdout must be routed to stderr")
 }
 
+func TestExecApplyRunDryRunCapturesAndTeesCombinedOutput(t *testing.T) {
+	outR, outW, err := os.Pipe()
+	require.NoError(t, err)
+	errR, errW, err := os.Pipe()
+	require.NoError(t, err)
+
+	origOut, origErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	got, runErr := execApplyRun(context.Background(), "sh", []string{"-c", "echo child-stdout; echo child-stderr >&2", "--dry-run"}, os.Environ())
+	os.Stdout, os.Stderr = origOut, origErr
+	require.NoError(t, outW.Close())
+	require.NoError(t, errW.Close())
+	require.NoError(t, runErr)
+
+	gotOut, err := io.ReadAll(outR)
+	require.NoError(t, err)
+	gotErr, err := io.ReadAll(errR)
+	require.NoError(t, err)
+
+	assert.Empty(t, string(gotOut), "apply delegate stdout must not reach process stdout")
+	assert.Contains(t, string(got), "child-stdout")
+	assert.Contains(t, string(got), "child-stderr")
+	assert.Contains(t, string(gotErr), "child-stdout", "dry-run stdout should still tee to stderr")
+	assert.Contains(t, string(gotErr), "child-stderr", "dry-run stderr should still tee to stderr")
+}
+
+func TestExecApplyRunLiveStreamsWithoutCapture(t *testing.T) {
+	got, err := execApplyRun(context.Background(), "sh", []string{"-c", "exit 0"}, os.Environ())
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+func TestHasArg(t *testing.T) {
+	assert.True(t, hasArg([]string{"run", "--dry-run"}, "--dry-run"))
+	assert.False(t, hasArg([]string{"run", "--dry-run=false"}, "--dry-run"))
+	assert.False(t, hasArg([]string{"run", "--not-dry-run"}, "--dry-run"))
+}
+
 func TestRequireToolPresent(t *testing.T) {
 	// sh is always on PATH on the platforms goldfinger targets.
 	require.NoError(t, requireTool("sh", "install a POSIX shell"))

@@ -56,6 +56,18 @@ func TestGuideJSONEmitsVersionedCatalogue(t *testing.T) {
 	assert.Equal(t, "true", findFlag(t, apply, "--dry-run").Default, "apply's dry-run-by-default must be visible in the catalogue")
 }
 
+func TestApplyCapabilitiesDescribeDryRunDigest(t *testing.T) {
+	apply := findCommand(t, buildCapabilities(newRootCmd()), "apply")
+	var found bool
+	for _, note := range apply.Notes {
+		if containsAll(note, []string{"dry-run", "status digest", "would-change", "no-change", "error", "full-output", "does not emit a diff"}) {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "apply notes must describe dry-run's digest reality")
+}
+
 // TestGuideJSONWritesOnlyToStdout independently asserts the JSON contract for
 // guide --json: the catalogue is the ONLY thing on stdout and stderr stays empty,
 // so an agent can parse stdout without stripping banners. The shared executeCmd
