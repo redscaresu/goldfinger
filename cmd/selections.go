@@ -59,7 +59,7 @@ func newSelectionsCmd() *cobra.Command {
 func runSelections(names []string, opts selectionsOptions, out, errOut io.Writer) error {
 	errOut = quietWriter(errOut, opts.quiet)
 	if opts.asJSON {
-		return emitSelectionsJSON(out, names)
+		return emitSelectionsJSON(out, names, opts.quiet)
 	}
 	if opts.quiet {
 		return nil
@@ -96,7 +96,7 @@ func renderSelectionsTable(out, errOut io.Writer, names []string) error {
 // unreadable entry is kept with an `error` field (mirroring the tolerant table),
 // and PathForName failures surface as that entry's error too rather than aborting
 // the whole listing — an agent still gets every name.
-func emitSelectionsJSON(out io.Writer, names []string) error {
+func emitSelectionsJSON(out io.Writer, names []string, quiet bool) error {
 	rep := selectionsReport{
 		Version:    selectionsReportVersion,
 		Selections: make([]selectionEntryJSON, 0, len(names)),
@@ -122,5 +122,5 @@ func emitSelectionsJSON(out io.Writer, names []string) error {
 		entry.ResolvedAt = sel.ResolvedAt.Format(time.RFC3339)
 		rep.Selections = append(rep.Selections, entry)
 	}
-	return emitJSON(out, rep)
+	return emitJSON(out, rep, quiet)
 }

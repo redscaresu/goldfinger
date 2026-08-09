@@ -268,7 +268,10 @@ MACHINE-READABLE OUTPUT
   Every read command emits JSON on request, one contract: stdout = machine data,
   stderr = human banners/logs. In --json mode stdout is ONLY the JSON. Human
   stderr can be discarded with 2>/dev/null. The global --quiet / -q flag silences
-  that human stream and keeps stdout to a single machine result.
+  that human stream and keeps stdout to a single machine result; it also emits
+  every JSON payload compact (single-line) rather than indented, so an agent
+  parsing it spends fewer tokens. The default (no --quiet) stays pretty-printed
+  for a human terminal. Only whitespace differs — the shape is identical.
        goldfinger select --json ...   -> {selectionPath, selection:{…lockfile…}}
        goldfinger doctor --json       -> {version, checks:[{check, status, detail, fix}]}
        goldfinger check --json        -> {version, inSync, added, removed, …}
@@ -288,7 +291,9 @@ MACHINE-READABLE OUTPUT
        goldfinger doctor --quiet       -> empty stdout; exit code carries pass/fail
        goldfinger selections --quiet   -> empty stdout unless --json
        goldfinger workspaces list --quiet -> empty stdout unless --json
-  guide and schema are already stdout payloads, so --quiet is a no-op for them.
+  guide (prose) and schema are already stdout payloads, so --quiet does not
+  change WHAT they print — but where they emit JSON (guide --json, and schema,
+  which is always JSON), --quiet still compacts it to a single line.
   guide --json is the self-describing CLI catalogue: every command, its flags,
   which flags are required, a flag's enum values (e.g. --sign), and a canonical
   example per command — discover what goldfinger can do by parsing structure

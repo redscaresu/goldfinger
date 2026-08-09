@@ -22,7 +22,7 @@ func newGuideCmd() *cobra.Command {
 			if asJSON {
 				// The machine-consumable CLI catalogue is derived from the live
 				// command tree (cmd.Root()), so it can never omit a registered command.
-				return emitJSON(cmd.OutOrStdout(), buildCapabilities(cmd.Root()))
+				return emitJSON(cmd.OutOrStdout(), buildCapabilities(cmd.Root()), quietRequested(cmd))
 			}
 			fmt.Fprint(cmd.OutOrStdout(), guideText)
 			return nil

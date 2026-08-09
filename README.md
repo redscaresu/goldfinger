@@ -543,7 +543,10 @@ Every read command emits structured JSON on request, following one contract:
 JSON is the *only* thing on stdout — banners, progress, and the auth lines all go
 to stderr — so an agent can parse stdout without stripping prose. The global
 `--quiet` / `-q` flag silences that human stderr stream and, for non-JSON
-commands, reduces stdout to the one machine result described below.
+commands, reduces stdout to the one machine result described below. Under
+`--quiet` these JSON payloads are also emitted compact (single-line) rather than
+indented — same shape, fewer tokens; see [Designed for
+agents](#designed-for-agents-reducing-token-consumption).
 
 | Command | Flag | Payload |
 | ------- | ---- | ------- |
@@ -603,8 +606,18 @@ Under quiet, `select` prints the lockfile path (or the JSON report with
 `--report-json`; a dry-run creates no workspace, so it prints nothing), a dry-run
 `apply` prints its per-repo status digest (or, with `--plan-json`, the plan JSON
 instead), and `check`, `doctor`, `selections`, and `workspaces` print JSON only
-when their `--json` flag is set. `guide` and `schema` are already stdout payloads,
-so quiet is a no-op for them.
+when their `--json` flag is set. `guide` (prose) and `schema` are already stdout
+payloads, so quiet does not change *what* they print — but where they emit JSON,
+it still compacts it (below).
+
+**Compact JSON in machine mode.** `--quiet` also switches every JSON payload from
+the indented, human-readable form to compact single-line JSON — the same fields
+and shape, just without the whitespace an agent pays tokens for. This applies to
+every `--json`/`--report-json`/`--plan-json` surface plus `guide --json` and
+`schema` (the two largest payloads, so the biggest saving). The default — no
+`--quiet` — stays pretty-printed for a human terminal. Because only whitespace
+differs, the [`schema`](#goldfinger-schema) contract is unchanged: output validated
+against it in either form.
 
 For apply dry-runs, consume goldfinger's per-repo status digest instead of
 scraping the fleet-wide child output. The digest names `would-change`,
@@ -617,7 +630,7 @@ exit code carries multi-gitter's success.
 
 Large artifacts are files, not streams: `mirror --write-report` writes the mirror
 report under the workspace, and apply dry-runs write the full multi-gitter output
-to a temp log. Compact JSON contracts stay discoverable: `guide --json` is the
+to a temp log. Machine contracts stay discoverable: `guide --json` is the
 input catalogue, `schema` is the output contract, and command-specific flags like
 `--report-json` and `--plan-json` keep stdout parseable.
 

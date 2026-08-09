@@ -167,14 +167,20 @@ func emitMirrorReport(sel models.Selection, ws string, opts mirror.Options, repo
 	if opts.DryRun || (!report.toStdout && !report.toFile) {
 		return nil
 	}
-	data, err := json.MarshalIndent(buildMirrorReport(sel, ws, opts), "", "  ")
-	if err != nil {
-		return fmt.Errorf("render mirror report: %w", err)
-	}
+	rep := buildMirrorReport(sel, ws, opts)
+	// stdout follows the machine-mode format contract (compact under --quiet); the
+	// persisted report file is an artifact a human may open, so it stays indented
+	// regardless. Same shape either way — only whitespace differs.
 	if report.toStdout {
-		fmt.Fprintln(out, string(data))
+		if err := emitJSON(out, rep, report.quiet); err != nil {
+			return fmt.Errorf("render mirror report: %w", err)
+		}
 	}
 	if report.toFile {
+		data, err := json.MarshalIndent(rep, "", "  ")
+		if err != nil {
+			return fmt.Errorf("render mirror report: %w", err)
+		}
 		path := filepath.Join(ws, mirrorReportName)
 		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 			return fmt.Errorf("write mirror report: %w", err)

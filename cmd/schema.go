@@ -39,7 +39,7 @@ func newSchemaCmd() *cobra.Command {
 			"connection, and runs no git. Output is always JSON on stdout; the --json " +
 			"flag is accepted for symmetry with the other commands and changes nothing.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return emitJSON(cmd.OutOrStdout(), buildSchemaCatalogue())
+			return emitJSON(cmd.OutOrStdout(), buildSchemaCatalogue(), quietRequested(cmd))
 		},
 	}
 	// schema is JSON-only by nature; accept --json as a no-op so an agent can pass it
