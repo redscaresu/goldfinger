@@ -148,8 +148,15 @@ goldfinger select --org mycompany --all-repos
   your `gh` session and a stray `GITHUB_TOKEN`/`GH_TOKEN` is set in the
   environment, it also warns that `gh` may be using that ambient token instead of
   your stored login. The token value itself is never printed.
-- Writes `goldfinger.selection` and prints the set for review. The lockfile is
-  plain JSON — inspect or diff it before mirroring/applying:
+- `--list` — echo every selected repo's full name on **stdout**, one per line.
+  By default stdout stays **terse**: the repo count goes to stderr (`N repo(s)
+  written to …`) and the full list lives in the lockfile, so a large selection
+  doesn't dump one stdout line per repo onto a driving agent. Pass `--list` when
+  you want the names back on stdout, or `--json` for the full wrapper. (Behaviour
+  change: earlier versions printed the repo list on stdout by default; that echo
+  is now `--list`.)
+- Writes `goldfinger.selection`; the lockfile is plain JSON — inspect or diff it
+  before mirroring/applying:
 
 ```json
 {

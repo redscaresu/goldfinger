@@ -89,6 +89,7 @@ var curatedCapabilities = map[string]curatedCommand{
 		notes: []string{
 			"exactly one of --all-repos or --topic is required (they are mutually exclusive)",
 			"--branch-presence <b> records, read-only, which repos have branch <b> so a later `mirror --branch <b>` can report fall-backs",
+			"stdout is terse by default: the repo count is on stderr and the full list is in the lockfile; pass --list to echo every selected repo's full name on stdout, or --json for the full wrapper",
 			nameSelectionExclusiveNote,
 			nameShapeNote,
 		},

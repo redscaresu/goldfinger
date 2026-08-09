@@ -67,8 +67,11 @@ func TestRunSelectWritesLockfile(t *testing.T) {
 	}, &out, &errOut)
 	require.NoError(t, err)
 
-	// Only the non-archived platform repo is selected.
-	assert.Equal(t, "redscaresu/platform-svc\n", out.String())
+	// Terse by default (issue #48 WS7): stdout stays empty — the list is in the
+	// lockfile and the count is on the stderr done() line — so a large selection
+	// doesn't dump one stdout line per repo. --list opts back into the names
+	// (TestRunSelectListEchoesNames).
+	assert.Empty(t, out.String(), "default stdout is terse; the count is on stderr, the list in the lockfile")
 	assert.Contains(t, errOut.String(), "1 repo(s) written")
 	// The resolved identity is surfaced on stderr for wrong-token diagnosis.
 	assert.Contains(t, errOut.String(), "authenticated as redscaresu")
@@ -82,6 +85,60 @@ func TestRunSelectWritesLockfile(t *testing.T) {
 	assert.False(t, sel.ResolvedAt.IsZero())
 	require.Len(t, sel.Repos, 1)
 	assert.Equal(t, "redscaresu/platform-svc", sel.Repos[0].FullName())
+}
+
+func TestRunSelectListEchoesNames(t *testing.T) {
+	r := fakeResolver{
+		login:     "redscaresu",
+		ownerType: models.OwnerUser,
+		repos: []models.Repo{
+			{Owner: "redscaresu", Name: "platform-svc", Topics: []string{"platform"}},
+			{Owner: "redscaresu", Name: "platform-api", Topics: []string{"platform"}},
+			{Owner: "redscaresu", Name: "web", Topics: []string{"frontend"}},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	var out, errOut bytes.Buffer
+
+	err := runSelect(context.Background(), r, selectOpts{
+		t:             targeting{org: "redscaresu", topics: []string{"platform"}},
+		selectionPath: path,
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+		list:          true,
+	}, &out, &errOut)
+	require.NoError(t, err)
+
+	// --list restores the full-name echo on stdout, one per selected repo.
+	assert.Equal(t, "redscaresu/platform-svc\nredscaresu/platform-api\n", out.String())
+	assert.Contains(t, errOut.String(), "2 repo(s) written")
+}
+
+// TestRunSelectListBeatsQuietPath locks the output precedence: --list wins over
+// quiet's path-only stdout, so `select --quiet --list` echoes the names (not the
+// lockfile path). This pins the documented switch order (json > list > quiet).
+func TestRunSelectListBeatsQuietPath(t *testing.T) {
+	r := fakeResolver{
+		login:     "redscaresu",
+		ownerType: models.OwnerUser,
+		repos:     []models.Repo{{Owner: "redscaresu", Name: "platform-svc", Topics: []string{"platform"}}},
+	}
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	var out, errOut bytes.Buffer
+
+	err := runSelect(context.Background(), r, selectOpts{
+		t:             targeting{org: "redscaresu", topics: []string{"platform"}},
+		selectionPath: path,
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+		list:          true,
+		quiet:         true,
+	}, &out, &errOut)
+	require.NoError(t, err)
+
+	assert.Equal(t, "redscaresu/platform-svc\n", out.String(), "--list echoes names even under --quiet")
+	assert.NotContains(t, out.String(), path, "the lockfile path is not printed when --list wins")
+	assert.Empty(t, errOut.String(), "quiet still suppresses stderr banners/done line")
 }
 
 func TestRunSelectJSON(t *testing.T) {
