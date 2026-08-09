@@ -39,8 +39,9 @@ it does not reimplement mirroring or PR-fanout.
   agent's own initiative or by accident. `apply` defaults to dry-run; a real run
   additionally needs `--dry-run=false --confirm`. An agent may perform the real
   run **only when the human has explicitly authorized this specific fleet
-  change** — and then must dry-run first, present the diff, and prefer `--draft`.
-  Absent explicit authorization, the real run is the human's to execute.
+  change** — and then must dry-run first, present the status digest, and prefer
+  `--draft`. Absent explicit authorization, the real run is the human's to
+  execute.
 - `apply` requires `--sign` on **every** run (`local` = the operator's own GPG
   key via the git binary, `github` = GitHub's web-flow key via the API, `none` =
   unsigned) — there is no default. An agent must pass it explicitly and state

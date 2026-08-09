@@ -3,6 +3,7 @@ package apply
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -43,9 +44,9 @@ type capture struct {
 	env  []string
 }
 
-func (c *capture) run(_ context.Context, name string, args, env []string) error {
+func (c *capture) run(_ context.Context, name string, args, env []string) ([]byte, error) {
 	c.name, c.args, c.env = name, args, env
-	return nil
+	return nil, nil
 }
 
 func TestApplyInvocation(t *testing.T) {
@@ -58,7 +59,7 @@ func TestApplyInvocation(t *testing.T) {
 	spec.Draft = true
 	spec.BaseBranch = "dev"
 
-	err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "secret-token")
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "secret-token")
 	require.NoError(t, err)
 
 	assert.Contains(t, cap.args, "--base-branch=dev")
@@ -86,7 +87,8 @@ func TestApplyInvocation(t *testing.T) {
 
 func TestApplyOneRepoFlagPerRepo(t *testing.T) {
 	var cap capture
-	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "t"))
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "t")
+	require.NoError(t, err)
 	n := 0
 	for _, a := range cap.args {
 		if strings.HasPrefix(a, "--repo=") {
@@ -99,14 +101,15 @@ func TestApplyOneRepoFlagPerRepo(t *testing.T) {
 func TestApplyWrapsScript(t *testing.T) {
 	var scriptBody string
 	var scriptPath string
-	run := func(_ context.Context, _ string, args, _ []string) error {
+	run := func(_ context.Context, _ string, args, _ []string) ([]byte, error) {
 		scriptPath = args[1] // run <scriptPath>
 		data, err := os.ReadFile(scriptPath)
 		require.NoError(t, err)
 		scriptBody = string(data)
-		return nil
+		return nil, nil
 	}
-	require.NoError(t, Apply(context.Background(), run, twoRepoSelection(), baseSpec(), "t"))
+	_, err := Apply(context.Background(), run, twoRepoSelection(), baseSpec(), "t")
+	require.NoError(t, err)
 
 	assert.Contains(t, scriptBody, "#!/bin/sh")
 	assert.Contains(t, scriptBody, "exec 'sed' '-i' 's|a|b|' 'Dockerfile'")
@@ -120,7 +123,8 @@ func TestApplyNoDryRunOmitsFlag(t *testing.T) {
 	spec := baseSpec()
 	spec.DryRun = false
 	spec.Confirm = true // a live run must be explicitly confirmed at the boundary
-	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t"))
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t")
+	require.NoError(t, err)
 	assert.NotContains(t, cap.args, "--dry-run")
 }
 
@@ -134,7 +138,7 @@ func TestApplyRefusesUnconfirmedLiveRun(t *testing.T) {
 	spec := baseSpec()
 	spec.DryRun = false
 	spec.Confirm = false
-	err := Apply(context.Background(), failRunner(t), twoRepoSelection(), spec, "t")
+	_, err := Apply(context.Background(), failRunner(t), twoRepoSelection(), spec, "t")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Confirm")
 }
@@ -153,7 +157,7 @@ func TestApplyRequiresValidSignMode(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			spec := baseSpec() // dry-run: proves --sign is required on every run, not just live
 			spec.Sign = mode
-			err := Apply(context.Background(), failRunner(t), twoRepoSelection(), spec, "t")
+			_, err := Apply(context.Background(), failRunner(t), twoRepoSelection(), spec, "t")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "signing mode")
 		})
@@ -168,13 +172,14 @@ func TestApplyAllowsConfirmedSignedLiveRun(t *testing.T) {
 	spec.DryRun = false
 	spec.Confirm = true
 	spec.Sign = models.SignLocal
-	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t"))
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t")
+	require.NoError(t, err)
 	assert.Equal(t, "multi-gitter", cap.name)
 	assert.Contains(t, cap.args, "--git-type=cmd")
 }
 
 func TestApplyEmptySelection(t *testing.T) {
-	err := Apply(context.Background(), failRunner(t), models.Selection{Owner: "x"}, baseSpec(), "t")
+	_, err := Apply(context.Background(), failRunner(t), models.Selection{Owner: "x"}, baseSpec(), "t")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty")
 }
@@ -184,7 +189,7 @@ func TestApplyTooManyRepos(t *testing.T) {
 	for i := 0; i <= maxRepos; i++ {
 		s.Repos = append(s.Repos, models.Repo{Owner: "big", Name: "r"})
 	}
-	err := Apply(context.Background(), failRunner(t), s, baseSpec(), "t")
+	_, err := Apply(context.Background(), failRunner(t), s, baseSpec(), "t")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "limit")
 }
@@ -193,7 +198,8 @@ func TestApplyOverridesExistingToken(t *testing.T) {
 	securityTest(t)
 	t.Setenv(tokenEnv, "runner-default-token") // e.g. CI's own GITHUB_TOKEN
 	var cap capture
-	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "our-token"))
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "our-token")
+	require.NoError(t, err)
 
 	var vals []string
 	for _, e := range cap.env {
@@ -209,7 +215,8 @@ func TestApplyStripsSourcePATFromChildEnv(t *testing.T) {
 	securityTest(t)
 	t.Setenv(models.TokenEnvVar, "raw-pat") // operator's exported GOLD_FINGER_PAT
 	var cap capture
-	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "mapped-token"))
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "mapped-token")
+	require.NoError(t, err)
 
 	for _, e := range cap.env {
 		assert.NotContains(t, e, models.TokenEnvVar+"=", "source PAT var must not reach the child")
@@ -224,7 +231,8 @@ func TestApplyPinsEmptyConfig(t *testing.T) {
 	// discovery can't override the lockfile selection. The file must exist at
 	// call time and be cleaned up afterwards.
 	var cap capture
-	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "t"))
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "t")
+	require.NoError(t, err)
 
 	var configPath string
 	for _, a := range cap.args {
@@ -238,13 +246,14 @@ func TestApplyPinsEmptyConfig(t *testing.T) {
 }
 
 func TestApplyPropagatesRunError(t *testing.T) {
-	run := func(context.Context, string, []string, []string) error {
-		return errors.New("multi-gitter exploded")
+	run := func(context.Context, string, []string, []string) ([]byte, error) {
+		return []byte("partial output"), errors.New("multi-gitter exploded")
 	}
-	err := Apply(context.Background(), run, twoRepoSelection(), baseSpec(), "t")
+	result, err := Apply(context.Background(), run, twoRepoSelection(), baseSpec(), "t")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multi-gitter run")
 	assert.Contains(t, err.Error(), "exploded")
+	assert.Equal(t, []byte("partial output"), result.Output)
 }
 
 // multiCapture records every runner invocation, for batch tests.
@@ -252,11 +261,11 @@ type multiCapture struct {
 	calls [][]string // args of each call
 }
 
-func (m *multiCapture) run(_ context.Context, _ string, args, _ []string) error {
+func (m *multiCapture) run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
 	cp := make([]string, len(args))
 	copy(cp, args)
 	m.calls = append(m.calls, cp)
-	return nil
+	return []byte(fmt.Sprintf("batch-%d", len(m.calls))), nil
 }
 
 func fiveRepoSelection() models.Selection {
@@ -287,7 +296,8 @@ func TestApplyBatchesRunsAndPauses(t *testing.T) {
 	spec := baseSpec()
 	spec.BatchSize = 2
 	spec.BatchPause = 90 * time.Second
-	require.NoError(t, Apply(context.Background(), mc.run, fiveRepoSelection(), spec, "t"))
+	result, err := Apply(context.Background(), mc.run, fiveRepoSelection(), spec, "t")
+	require.NoError(t, err)
 
 	// 5 repos / batch 2 -> 3 batches, split in order, none dropped.
 	require.Len(t, mc.calls, 3)
@@ -297,6 +307,7 @@ func TestApplyBatchesRunsAndPauses(t *testing.T) {
 
 	// Pause happens between batches only: 3 batches -> 2 pauses, each the set value.
 	assert.Equal(t, []time.Duration{90 * time.Second, 90 * time.Second}, pauses)
+	assert.Equal(t, "batch-1\nbatch-2\nbatch-3", string(result.Output))
 }
 
 func TestApplyNoBatchIsSingleRun(t *testing.T) {
@@ -305,7 +316,8 @@ func TestApplyNoBatchIsSingleRun(t *testing.T) {
 	t.Cleanup(func() { sleep = orig })
 
 	var mc multiCapture
-	require.NoError(t, Apply(context.Background(), mc.run, fiveRepoSelection(), baseSpec(), "t"))
+	_, err := Apply(context.Background(), mc.run, fiveRepoSelection(), baseSpec(), "t")
+	require.NoError(t, err)
 	require.Len(t, mc.calls, 1, "unbatched apply is one run over the whole selection")
 	assert.Len(t, repoFlags(mc.calls[0]), 5)
 }
@@ -316,19 +328,20 @@ func TestApplyBatchErrorReportsBatchNumber(t *testing.T) {
 	t.Cleanup(func() { sleep = orig })
 
 	calls := 0
-	run := func(context.Context, string, []string, []string) error {
+	run := func(context.Context, string, []string, []string) ([]byte, error) {
 		calls++
 		if calls == 2 {
-			return errors.New("secondary rate limit")
+			return []byte("batch two output"), errors.New("secondary rate limit")
 		}
-		return nil
+		return []byte(fmt.Sprintf("batch-%d\n", calls)), nil
 	}
 	spec := baseSpec()
 	spec.BatchSize = 2
-	err := Apply(context.Background(), run, fiveRepoSelection(), spec, "t")
+	result, err := Apply(context.Background(), run, fiveRepoSelection(), spec, "t")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "batch 2/3")
 	assert.Contains(t, err.Error(), "rate limit")
+	assert.Equal(t, "batch-1\nbatch two output", string(result.Output))
 }
 
 func TestApplySignModeArgs(t *testing.T) {
@@ -347,7 +360,8 @@ func TestApplySignModeArgs(t *testing.T) {
 			var cap capture
 			spec := baseSpec()
 			spec.Sign = tt.mode
-			require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t"))
+			_, err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t")
+			require.NoError(t, err)
 			if tt.wantArg != "" {
 				assert.Contains(t, cap.args, tt.wantArg)
 			}
@@ -370,7 +384,8 @@ func TestApplyLocalSignPassesNoAuthorFlags(t *testing.T) {
 	var cap capture
 	spec := baseSpec()
 	spec.Sign = models.SignLocal
-	require.NoError(t, Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t"))
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t")
+	require.NoError(t, err)
 
 	for _, a := range cap.args {
 		assert.False(t, strings.HasPrefix(a, "--author-name"),
@@ -394,9 +409,9 @@ func TestShellQuoteEscapesSingleQuote(t *testing.T) {
 }
 
 func failRunner(t *testing.T) Runner {
-	return func(context.Context, string, []string, []string) error {
+	return func(context.Context, string, []string, []string) ([]byte, error) {
 		t.Helper()
 		t.Fatal("runner should not be called")
-		return nil
+		return nil, nil
 	}
 }

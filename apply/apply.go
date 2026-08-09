@@ -28,11 +28,18 @@ const maxRepos = 1000
 
 // Runner executes an external command. It is the seam that lets Apply build and
 // dispatch a multi-gitter invocation without multi-gitter installed in tests.
-type Runner func(ctx context.Context, name string, args, env []string) error
+type Runner func(ctx context.Context, name string, args, env []string) ([]byte, error)
+
+// Result is the observable output from an apply run that goldfinger owns. For a
+// dry-run it carries the combined output captured from multi-gitter so cmd/ can
+// summarize it honestly; live runs stream and usually leave Output nil.
+type Result struct {
+	Output []byte
+}
 
 // Apply runs spec's script across exactly the repos in s via multi-gitter. The
 // token is passed through the child environment, never argv.
-func Apply(ctx context.Context, run Runner, s models.Selection, spec models.ApplySpec, token string) error {
+func Apply(ctx context.Context, run Runner, s models.Selection, spec models.ApplySpec, token string) (Result, error) {
 	// Enforce the two charter invariants here, at the lowest exported execution
 	// boundary — before writing the user script or invoking multi-gitter — so a
 	// caller that bypasses the Cobra layer (e.g. a future MCP adapter calling
@@ -41,23 +48,23 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	//
 	// (a) A live run (opens PRs) must be explicitly confirmed.
 	if !spec.DryRun && !spec.Confirm {
-		return errors.New("refusing a live apply: DryRun is false but Confirm is false — a real run that opens PRs must be explicitly confirmed")
+		return Result{}, errors.New("refusing a live apply: DryRun is false but Confirm is false — a real run that opens PRs must be explicitly confirmed")
 	}
 	// (b) Every run must name a recognised signing mode — there is no default.
 	if !models.IsValidSignMode(spec.Sign) {
-		return fmt.Errorf("invalid signing mode %q: must be one of %s (your GPG key), %s (GitHub-verified), or %s (unsigned)", spec.Sign, models.SignLocal, models.SignGitHub, models.SignNone)
+		return Result{}, fmt.Errorf("invalid signing mode %q: must be one of %s (your GPG key), %s (GitHub-verified), or %s (unsigned)", spec.Sign, models.SignLocal, models.SignGitHub, models.SignNone)
 	}
 
 	if len(s.Repos) == 0 {
-		return errors.New("selection is empty — nothing to apply")
+		return Result{}, errors.New("selection is empty — nothing to apply")
 	}
 	if len(s.Repos) > maxRepos {
-		return fmt.Errorf("selection has %d repos, above the %d-repo limit for a single apply (multi-gitter takes repos as command-line flags); narrow the selection", len(s.Repos), maxRepos)
+		return Result{}, fmt.Errorf("selection has %d repos, above the %d-repo limit for a single apply (multi-gitter takes repos as command-line flags); narrow the selection", len(s.Repos), maxRepos)
 	}
 
 	scriptPath, cleanup, err := writeScript(spec.Script)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	defer cleanup()
 
@@ -66,7 +73,7 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	// override the exact lockfile set goldfinger passes as --repo flags.
 	configPath, cfgCleanup, err := writeEmptyFile("goldfinger-mg-config-*.yaml")
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	defer cfgCleanup()
 
@@ -81,6 +88,7 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	// "skip", so a batch that fails partway (e.g. the hourly limit) is resumable
 	// by re-running — already-created PRs are skipped.
 	batches := chunk(s.Repos, spec.BatchSize)
+	var result Result
 	for i, repos := range batches {
 		if i > 0 && spec.BatchPause > 0 {
 			sleep(spec.BatchPause)
@@ -88,14 +96,26 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 		sub := s
 		sub.Repos = repos
 		args := buildArgs(sub, spec, scriptPath, configPath)
-		if err := run(ctx, "multi-gitter", args, env); err != nil {
+		out, err := run(ctx, "multi-gitter", args, env)
+		result.Output = appendBatchOutput(result.Output, out)
+		if err != nil {
 			if len(batches) > 1 {
-				return fmt.Errorf("multi-gitter run (batch %d/%d): %w", i+1, len(batches), err)
+				return result, fmt.Errorf("multi-gitter run (batch %d/%d): %w", i+1, len(batches), err)
 			}
-			return fmt.Errorf("multi-gitter run: %w", err)
+			return result, fmt.Errorf("multi-gitter run: %w", err)
 		}
 	}
-	return nil
+	return result, nil
+}
+
+func appendBatchOutput(dst, src []byte) []byte {
+	if len(src) == 0 {
+		return dst
+	}
+	if len(dst) > 0 && dst[len(dst)-1] != '\n' {
+		dst = append(dst, '\n')
+	}
+	return append(dst, src...)
 }
 
 // chunk splits repos into slices of at most size. A size <= 0 (or one large

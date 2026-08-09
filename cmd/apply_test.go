@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/redscaresu/goldfinger/models"
@@ -53,15 +54,29 @@ func TestRunApply(t *testing.T) {
 	spec := models.ApplySpec{Branch: "b", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
 
 	t.Run("dry-run frames and delegates", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir())
 		var gotArgs []string
-		run := func(_ context.Context, _ string, args, _ []string) error { gotArgs = args; return nil }
+		run := func(_ context.Context, _ string, args, _ []string) ([]byte, error) {
+			gotArgs = args
+			return []byte("Repositories with a successful run:\n  acme/a #0\n"), nil
+		}
 		var errOut bytes.Buffer
 		err := runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut)
 		require.NoError(t, err)
 		assert.Contains(t, errOut.String(), "Applying to 1 repo(s)")
 		assert.Contains(t, errOut.String(), "dry-run")
 		assert.Contains(t, errOut.String(), "apply complete")
+		assert.Contains(t, errOut.String(), "dry-run: 1 repo — 1 would change, 0 no-change, 0 errors")
+		assert.Contains(t, errOut.String(), "  acme/a   would-change")
 		assert.Contains(t, gotArgs, "--dry-run")
+
+		path := fullRunOutputPath(t, errOut.String())
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		assert.Equal(t, "Repositories with a successful run:\n  acme/a #0\n", string(data))
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	})
 
 	t.Run("live mode banner", func(t *testing.T) {
@@ -69,17 +84,36 @@ func TestRunApply(t *testing.T) {
 		live.DryRun = false
 		live.Confirm = true // Apply refuses a live run that isn't confirmed
 		var errOut bytes.Buffer
-		run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+		run := func(_ context.Context, _ string, _, _ []string) ([]byte, error) { return nil, nil }
 		require.NoError(t, runApply(context.Background(), run, sel, live, "tok", false, io.Discard, &errOut))
 		assert.Contains(t, errOut.String(), "LIVE")
+		assert.NotContains(t, errOut.String(), "dry-run:")
+		assert.NotContains(t, errOut.String(), "full run output:")
 	})
 
 	t.Run("propagates delegate error", func(t *testing.T) {
-		run := func(_ context.Context, _ string, _, _ []string) error { return errors.New("mg blew up") }
-		err := runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &bytes.Buffer{})
+		t.Setenv("TMPDIR", t.TempDir())
+		run := func(_ context.Context, _ string, _, _ []string) ([]byte, error) {
+			return []byte("Clone failed:\n  acme/a\n"), errors.New("mg blew up")
+		}
+		var errOut bytes.Buffer
+		err := runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "mg blew up")
+		assert.Contains(t, errOut.String(), "dry-run: 1 repo")
+		assert.Contains(t, errOut.String(), "  acme/a   error: Clone failed")
 	})
+}
+
+func fullRunOutputPath(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "full run output: ") {
+			return strings.TrimPrefix(line, "full run output: ")
+		}
+	}
+	t.Fatalf("output did not include a full run output path:\n%s", output)
+	return ""
 }
 
 func TestRunApplyPlanJSON(t *testing.T) {
@@ -96,10 +130,11 @@ func TestRunApplyPlanJSON(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	called := false
-	run := func(_ context.Context, _ string, args, _ []string) error {
+	t.Setenv("TMPDIR", t.TempDir())
+	run := func(_ context.Context, _ string, args, _ []string) ([]byte, error) {
 		called = true
 		assert.Contains(t, args, "--dry-run", "plan-json supplements, never replaces, the dry-run")
-		return nil
+		return []byte("Repositories with a successful run:\n  acme/a #0\n  acme/b #0\n"), nil
 	}
 	require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", true, &out, &errOut))
 	assert.True(t, called, "apply.Apply still runs — plan-json is not a short-circuit")
@@ -166,9 +201,12 @@ func TestRunApplyPrintsPerRepoBase(t *testing.T) {
 		{Owner: "acme", Name: "a", DefaultBranch: "main"},
 		{Owner: "acme", Name: "b", DefaultBranch: "dev"},
 	}}
-	run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+	run := func(_ context.Context, _ string, _, _ []string) ([]byte, error) {
+		return []byte("Repositories with a successful run:\n  acme/a #0\n  acme/b #0\n"), nil
+	}
 
 	t.Run("routes each repo to its own default branch", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir())
 		spec := models.ApplySpec{Branch: "x", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
 		var errOut bytes.Buffer
 		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut))
@@ -177,6 +215,7 @@ func TestRunApplyPrintsPerRepoBase(t *testing.T) {
 	})
 
 	t.Run("global base-branch overrides every repo", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir())
 		spec := models.ApplySpec{Branch: "x", BaseBranch: "release", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: models.SignNone}
 		var errOut bytes.Buffer
 		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut))
@@ -187,7 +226,9 @@ func TestRunApplyPrintsPerRepoBase(t *testing.T) {
 
 func TestRunApplySigningBanner(t *testing.T) {
 	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a"}}}
-	run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+	run := func(_ context.Context, _ string, _, _ []string) ([]byte, error) {
+		return []byte("Repositories with a successful run:\n  acme/a #0\n"), nil
+	}
 
 	tests := []struct {
 		mode string
@@ -199,6 +240,7 @@ func TestRunApplySigningBanner(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
 			spec := models.ApplySpec{Branch: "b", CommitMessage: "m", PRTitle: "t", Script: []string{"true"}, DryRun: true, Sign: tt.mode}
 			var errOut bytes.Buffer
 			require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", false, io.Discard, &errOut))

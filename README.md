@@ -96,7 +96,7 @@ goldfinger mirror
 # for a one-off campaign, get an ephemeral timestamped snapshot instead:
 #   goldfinger mirror --purpose bump-go   # -> ~/goldfinger/bump-go-<timestamp>/<owner>/
 
-# 3. dry-run the change — shows the diff, opens nothing (--sign is always required)
+# 3. dry-run the change — prints a per-repo status digest, opens nothing (--sign is always required)
 goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
   --sign local -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 
@@ -326,9 +326,12 @@ use the `mirror` workspace, so `apply` works whether or not you ran `mirror`.
 It branches from the **current HEAD of the base branch at apply time** — not the
 SHA you mirrored in step 1 — so PRs are always against live base. If a repo's
 code moves between your inspection and the apply, the change runs against the
-newer code; confirm the real diff with `--dry-run` (which also clones fresh)
-rather than trusting the mirror snapshot. (`check` catches *selection* drift, not
-*content* drift inside a repo — only the dry-run shows that.)
+newer code; run `--dry-run` first (it also clones fresh) rather than trusting the
+mirror snapshot. Non-interactive multi-gitter dry-run does **not** emit a unified
+diff; goldfinger prints the per-repo status it can honestly know
+(`would-change`, `no-change`, or `error`) plus a full-output file path. (`check`
+catches *selection* drift, not *content* drift inside a repo — dry-run is the
+apply-time signal.)
 
 - The command after `--` runs in each repo's checkout, **on your machine** — so
   it must be portable to your OS. `sed -i 's|…|…|g'` is a GNU-ism that fails on
@@ -367,23 +370,24 @@ rather than trusting the mirror snapshot. (`check` catches *selection* drift, no
     (see below).
   - `--sign none` — **unsigned** commits (multi-gitter's default `go-git` path).
     An explicit, deliberate opt-out; the dry-run banner flags it loudly.
-- **Safety:** `apply` defaults to `--dry-run` (shows the change, opens nothing). A
-  real run requires **both** `--dry-run=false` **and** `--confirm` — the guard
-  against an accidental fleet-wide PR blast. A real run should always follow a
-  reviewed dry-run; when an agent runs it under explicit human authorization,
-  prefer `--draft`.
+- **Safety:** `apply` defaults to `--dry-run` (prints a per-repo status digest
+  and opens nothing). A real run requires **both** `--dry-run=false` **and**
+  `--confirm` — the guard against an accidental fleet-wide PR blast. A real run
+  should always follow a reviewed dry-run; when an agent runs it under explicit
+  human authorization, prefer `--draft`.
 - **`--plan-json` (machine-readable plan).** Emits, on stdout, a structured
   summary of **what goldfinger is about to invoke** — branch, PR title, sign mode,
   the base-branch source, and one entry per repo — so an agent can present the plan
   crisply. It is **invocation metadata, not the diff**: goldfinger delegates the
-  clone/script/diff to multi-gitter and only receives an exit status, so the plan
-  never fabricates per-repo `changed` flags or a diffstat. Two safety points: the
+  clone/script/diff to multi-gitter, so the plan never fabricates per-repo
+  `changed` flags or a diffstat. Two safety points: the
   script after `--` is emitted only as `command_program` (argv[0]) with
   `command_redacted: true` (your script is arbitrary and may carry secrets), and
   the PR body is reduced to `pr_body_present` (a boolean). `--plan-json`
   **supplements** the dry-run — it does not replace it: goldfinger still runs
-  multi-gitter's `--dry-run` so you get both the plan (stdout) and the real diff
-  (stderr). `base_branch_recorded` is the value **recorded at selection time**;
+  multi-gitter's `--dry-run` so you get both the plan (stdout) and the status
+  digest plus full-output file path (stderr). `base_branch_recorded` is the value
+  **recorded at selection time**;
   with no `--base-branch`, multi-gitter targets each repo's *live* default at run
   time, which can drift (same caveat the dry-run banner prints) — the guarantee
   between phases is set-identity, not commit-SHA-identity.
@@ -745,7 +749,7 @@ a setting), use the `goldfinger` CLI rather than hand-rolling clone/PR loops —
 freezes the repo selection once and drives ghorg + multi-gitter against that exact
 set. Run `goldfinger guide` for the playbook. Opening real PRs (`goldfinger apply
 --dry-run=false --confirm`) needs explicit human authorization — always dry-run
-first and show the diff. Install: `brew install redscaresu/tap/goldfinger` or
+first and present the status digest. Install: `brew install redscaresu/tap/goldfinger` or
 `curl -sSfL https://raw.githubusercontent.com/redscaresu/goldfinger/main/install.sh | sh`.
 ```
 
