@@ -10,9 +10,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // workspaceManifestName is the sidecar file `mirror --purpose` drops at the root
@@ -32,6 +35,63 @@ const (
 	workspaceActionList  = "list"
 	workspaceActionPrune = "prune"
 )
+
+// ageSugarRE matches a whole-number day ("7d") or week ("2w") age — the sugar
+// parseAgeDuration adds on top of Go's duration syntax. An optional leading '-'
+// is matched so a negative like "-7d" parses to a negative duration and is
+// rejected by runWorkspaces' clear "must not be negative" check, rather than
+// falling through to time.ParseDuration's opaque "unknown unit d" error.
+var ageSugarRE = regexp.MustCompile(`^(-?\d+)([dw])$`)
+
+// parseAgeDuration parses a snapshot age. It accepts everything Go's
+// time.ParseDuration does (e.g. "36h", "90m", "1h30m") and additionally the day
+// ("d") and week ("w") units Go lacks — "7d" == 168h, "2w" == 336h — because
+// operators reach for --older-than in days and weeks, not hours. The d/w sugar is
+// deliberately a single whole-number-plus-unit form (no "1w3d" compounding) so it
+// stays unambiguous; anything else is handed to time.ParseDuration unchanged.
+func parseAgeDuration(s string) (time.Duration, error) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return 0, errors.New("empty duration")
+	}
+	if m := ageSugarRE.FindStringSubmatch(trimmed); m != nil {
+		n, err := strconv.ParseInt(m[1], 10, 64)
+		if err != nil {
+			// Only an out-of-range integer reaches here (the regex already
+			// guaranteed digits); surface it plainly rather than as a parse of "d"/"w".
+			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		unit := 24 * time.Hour
+		if m[2] == "w" {
+			unit = 7 * 24 * time.Hour
+		}
+		return time.Duration(n) * unit, nil
+	}
+	return time.ParseDuration(trimmed)
+}
+
+// ageDuration is the pflag.Value backing --older-than. It stores a time.Duration
+// but parses via parseAgeDuration, so the flag accepts "7d"/"2w" alongside Go
+// durations while runWorkspaces keeps consuming a plain time.Duration.
+type ageDuration struct{ d time.Duration }
+
+func (a *ageDuration) String() string { return a.d.String() }
+
+func (a *ageDuration) Set(s string) error {
+	d, err := parseAgeDuration(s)
+	if err != nil {
+		return err
+	}
+	a.d = d
+	return nil
+}
+
+// Type is the value-kind cobra shows in usage; "duration" keeps the help reading
+// like the Go-duration flag it still fundamentally is.
+func (a *ageDuration) Type() string { return "duration" }
+
+// interface check: ageDuration must satisfy pflag.Value to back a flag.
+var _ pflag.Value = (*ageDuration)(nil)
 
 // stampSuffixRE matches the trailing "-<stamp>" that resolveWorkspace appends to
 // every --purpose workspace, e.g. "audit-dev-2026-08-05-101112.131". It is the
@@ -95,7 +155,7 @@ type workspacesOptions struct {
 func newWorkspacesCmd() *cobra.Command {
 	var (
 		root      string
-		olderThan time.Duration
+		olderThan ageDuration
 		purpose   string
 		confirm   bool
 		asJSON    bool
@@ -119,7 +179,7 @@ func newWorkspacesCmd() *cobra.Command {
 			return runWorkspaces(workspacesOptions{
 				action:    args[0],
 				root:      root,
-				olderThan: olderThan,
+				olderThan: olderThan.d,
 				purpose:   purpose,
 				confirm:   confirm,
 				asJSON:    asJSON,
@@ -129,7 +189,7 @@ func newWorkspacesCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&root, "root", "", "workspace root to scan (default ~/goldfinger)")
-	f.DurationVar(&olderThan, "older-than", 0, "prune: only snapshots older than this age, e.g. 168h (0 = no age filter)")
+	f.Var(&olderThan, "older-than", "prune: only snapshots older than this age, e.g. 7d, 2w, or a Go duration like 168h (0 = no age filter)")
 	f.StringVar(&purpose, "purpose", "", "prune: only snapshots whose manifest records exactly this purpose (manifest-less snapshots are never matched)")
 	f.BoolVar(&confirm, "confirm", false, "prune: actually delete the matched snapshots (without it, prune only previews)")
 	f.BoolVar(&asJSON, "json", false, "emit the workspace listing as JSON on stdout (stderr keeps the human banners)")
