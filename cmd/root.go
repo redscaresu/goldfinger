@@ -24,6 +24,8 @@ func newRootCmd() *cobra.Command {
 		// can exit non-zero for drift without Cobra printing an "Error:" line.
 		SilenceErrors: true,
 	}
+	root.PersistentFlags().BoolP(quietFlagName, "q", false,
+		"silence human progress/decorations on stderr and keep stdout to the command's machine result")
 	root.AddCommand(newSelectCmd(), newMirrorCmd(), newApplyCmd(), newCheckCmd(), newSelectionsCmd(), newDoctorCmd(), newGuideCmd(), newSchemaCmd(), newWorkspacesCmd())
 	return root
 }

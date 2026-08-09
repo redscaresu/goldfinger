@@ -24,6 +24,7 @@ const mirrorReportName = "goldfinger-mirror.json"
 type reportOptions struct {
 	toStdout bool // --report-json: print the report JSON to stdout
 	toFile   bool // --write-report: write <workspace>/goldfinger-mirror.json (only on success)
+	quiet    bool
 }
 
 func newMirrorCmd() *cobra.Command {
@@ -44,6 +45,8 @@ func newMirrorCmd() *cobra.Command {
 		Use:   "mirror",
 		Short: "Clone the selection into a local workspace via ghorg",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			quiet := quietRequested(cmd)
+			errOut := humanErr(cmd)
 			// Pure/local validation first — flag combos, selection path, workspace —
 			// so a bad invocation fails without resolving a token (which can shell out
 			// to `gh`) or hitting the network.
@@ -69,20 +72,24 @@ func newMirrorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			announceTokenSource(cmd.ErrOrStderr(), source)
+			announceTokenSource(errOut, source)
 			if err := requireTool("ghorg", "https://github.com/gabrie30/ghorg#installation"); err != nil {
 				return err
 			}
-			if err := verifyAndAnnouncePrincipal(cmd.Context(), cmd.ErrOrStderr(), token); err != nil {
+			if err := verifyAndAnnouncePrincipal(cmd.Context(), errOut, token); err != nil {
 				return err
 			}
-			if err := runMirror(cmd.Context(), execRun, sel, ws, token, mirror.Options{
+			run := execRun
+			if quiet {
+				run = execRunQuiet
+			}
+			if err := runMirror(cmd.Context(), run, sel, ws, token, mirror.Options{
 				Branch:      branch,
 				Concurrency: concurrency,
 				CloneDepth:  cloneDepth,
 				NoClean:     noClean,
 				DryRun:      dryRun,
-			}, reportOptions{toStdout: reportJSON, toFile: writeReport}, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+			}, reportOptions{toStdout: reportJSON, toFile: writeReport, quiet: quiet}, cmd.OutOrStdout(), errOut); err != nil {
 				return err
 			}
 			// #29: drop a sidecar manifest in each --purpose snapshot so `workspaces
@@ -122,6 +129,7 @@ func newMirrorCmd() *cobra.Command {
 // failure — callers must check the exit code, not stdout, for success; the JSON
 // report, by contrast, is emitted only after a successful mirror.
 func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws, token string, opts mirror.Options, report reportOptions, out, errOut io.Writer) error {
+	errOut = quietWriter(errOut, report.quiet)
 	opts.Workspace = ws
 	// Reject an empty selection *before* printing anything to stdout. mirror.Mirror
 	// also rejects it, but only after runMirror would already have emitted the bare
@@ -131,7 +139,12 @@ func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws,
 	if len(sel.Repos) == 0 {
 		return errors.New("selection is empty — nothing to mirror; re-run `select` (a 0-repo select is an error unless --allow-empty)")
 	}
-	if !report.toStdout {
+	// A dry-run clones nothing and may never create the workspace, so under
+	// --quiet (where no banner explains the mode) a bare path on stdout would
+	// look like a real mirror result an agent could `cd` into. Suppress it there;
+	// non-quiet keeps the path (with the clarifying banner below) for parity.
+	misleadingDryRunPath := report.quiet && opts.DryRun
+	if !report.toStdout && !misleadingDryRunPath {
 		fmt.Fprintln(out, ws)
 	}
 	banner(errOut, fmt.Sprintf("Mirroring %d repo(s) into %s", len(sel.Repos), ws))

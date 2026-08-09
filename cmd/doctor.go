@@ -58,6 +58,7 @@ type doctorDeps struct {
 // doctorOpts groups runDoctor's non-dependency inputs.
 type doctorOpts struct {
 	asJSON bool
+	quiet  bool
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -80,7 +81,7 @@ func newDoctorCmd() *cobra.Command {
 				probeTool:    probeToolDefault,
 				loadConfig:   loadGitConfig,
 			}
-			return runDoctor(cmd.Context(), deps, doctorOpts{asJSON: asJSON}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runDoctor(cmd.Context(), deps, doctorOpts{asJSON: asJSON, quiet: quietRequested(cmd)}, cmd.OutOrStdout(), humanErr(cmd))
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false,
@@ -94,13 +95,14 @@ func newDoctorCmd() *cobra.Command {
 // inability to emit the report (a broken stdout) surfaces as a plain error → exit
 // 2, matching the exit-code contract.
 func runDoctor(ctx context.Context, deps doctorDeps, o doctorOpts, out, errOut io.Writer) error {
+	errOut = quietWriter(errOut, o.quiet)
 	checks := gatherDoctorChecks(ctx, deps)
 
 	if o.asJSON {
 		if err := emitJSON(out, doctorReport{Version: doctorReportVersion, Checks: checks}); err != nil {
 			return err
 		}
-	} else {
+	} else if !o.quiet {
 		renderDoctor(out, errOut, checks)
 	}
 

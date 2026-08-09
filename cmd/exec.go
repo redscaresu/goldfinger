@@ -16,12 +16,20 @@ import (
 // stderr: goldfinger reserves its own stdout for machine-readable output (the
 // mirror workspace path), so a delegate's chatter must never contaminate it.
 func execRun(ctx context.Context, name string, args, env []string) error {
+	return execRunToWriter(ctx, name, args, env, os.Stderr)
+}
+
+func execRunQuiet(ctx context.Context, name string, args, env []string) error {
+	return execRunToWriter(ctx, name, args, env, io.Discard)
+}
+
+func execRunToWriter(ctx context.Context, name string, args, env []string, w io.Writer) error {
 	// name/args are goldfinger's own delegate wiring (ghorg/multi-gitter + flags
 	// built in-process), never unsanitised external input; the single intentional exec seam.
 	c := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: see comment above — controlled delegate invocation, not external input.
 	c.Env = env
-	c.Stdout = os.Stderr
-	c.Stderr = os.Stderr
+	c.Stdout = w
+	c.Stderr = w
 	c.Stdin = os.Stdin
 	return c.Run()
 }
@@ -30,16 +38,24 @@ func execRun(ctx context.Context, name string, args, env []string) error {
 // can summarize multi-gitter's final repo counter block while still teeing live
 // progress to stderr. Live applies keep the existing streaming path.
 func execApplyRun(ctx context.Context, name string, args, env []string) ([]byte, error) {
+	return execApplyRunToWriter(ctx, name, args, env, os.Stderr)
+}
+
+func execApplyRunQuiet(ctx context.Context, name string, args, env []string) ([]byte, error) {
+	return execApplyRunToWriter(ctx, name, args, env, io.Discard)
+}
+
+func execApplyRunToWriter(ctx context.Context, name string, args, env []string, w io.Writer) ([]byte, error) {
 	if !hasArg(args, "--dry-run") {
-		return nil, execRun(ctx, name, args, env)
+		return nil, execRunToWriter(ctx, name, args, env, w)
 	}
 
 	var buf bytes.Buffer
-	w := io.MultiWriter(os.Stderr, &buf)
+	combined := io.MultiWriter(w, &buf)
 	c := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: see execRun — controlled delegate invocation, not external input.
 	c.Env = env
-	c.Stdout = w
-	c.Stderr = w
+	c.Stdout = combined
+	c.Stderr = combined
 	c.Stdin = os.Stdin
 	err := c.Run()
 	return buf.Bytes(), err

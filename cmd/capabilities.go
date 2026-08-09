@@ -111,7 +111,7 @@ var curatedCapabilities = map[string]curatedCommand{
 		notes: []string{
 			"a script command is required after -- (e.g. -- sed -i ...)",
 			"apply defaults to a dry-run; a real run additionally requires --dry-run=false AND --confirm",
-			"dry-run prints a per-repo status digest (would-change, no-change, error) and a full-output temp file path; multi-gitter's non-interactive dry-run does not emit a diff",
+			"dry-run prints a per-repo status digest (would-change, no-change, error); normally on stderr with a full-output temp file path, or on stdout (no temp file) under --quiet unless --plan-json owns stdout. multi-gitter's non-interactive dry-run does not emit a diff",
 			"--pr-body and --pr-body-file are mutually exclusive",
 			nameSelectionExclusiveNote,
 			nameShapeNote,
@@ -180,23 +180,36 @@ func buildCommandCapability(cmd *cobra.Command) commandCapability {
 		Example: cur.example,
 		Notes:   cur.notes,
 	}
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if f.Hidden || f.Name == "help" {
-			return
-		}
-		name := "--" + f.Name
-		cc.Flags = append(cc.Flags, flagCapability{
-			Name:     name,
-			Usage:    f.Usage,
-			Required: required[name],
-			Values:   cur.enumValues[name],
-			Default:  meaningfulDefault(f),
+	seenFlags := map[string]bool{}
+	visitCapabilityFlags := func(flags *pflag.FlagSet) {
+		flags.VisitAll(func(f *pflag.Flag) {
+			if seenFlags[f.Name] {
+				return
+			}
+			seenFlags[f.Name] = true
+			addFlagCapability(&cc, f, required, cur)
 		})
-	})
+	}
+	visitCapabilityFlags(cmd.NonInheritedFlags())
+	visitCapabilityFlags(cmd.InheritedFlags())
 	// RequiredFlags mirrors the curated order, so the headline contract reads in
 	// the sequence an operator supplies it.
 	cc.RequiredFlags = append([]string{}, cur.requiredFlags...)
 	return cc
+}
+
+func addFlagCapability(cc *commandCapability, f *pflag.Flag, required map[string]bool, cur curatedCommand) {
+	if f.Hidden || f.Name == "help" {
+		return
+	}
+	name := "--" + f.Name
+	cc.Flags = append(cc.Flags, flagCapability{
+		Name:     name,
+		Usage:    f.Usage,
+		Required: required[name],
+		Values:   cur.enumValues[name],
+		Default:  meaningfulDefault(f),
+	})
 }
 
 // isHiddenOrBuiltin reports whether a command should be omitted from the

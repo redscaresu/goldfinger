@@ -115,6 +115,48 @@ func TestListJSONShape(t *testing.T) {
 	assert.Equal(t, "audit", rep.Workspaces[0].Purpose)
 }
 
+func TestWorkspacesQuiet(t *testing.T) {
+	root := t.TempDir()
+	created := time.Date(2026, 8, 5, 10, 11, 12, 131000000, time.UTC)
+	dir := makeSnapshot(t, root, "audit-2026-08-05-101112.131", "audit", "", created, 512)
+
+	t.Run("list non-json emits nothing", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		err := runWorkspaces(workspacesOptions{action: workspaceActionList, root: root, quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		assert.Empty(t, out.String())
+		assert.Empty(t, errOut.String())
+	})
+
+	t.Run("list json emits report only", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		err := runWorkspaces(workspacesOptions{action: workspaceActionList, root: root, asJSON: true, quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		var rep workspacesReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+		require.Len(t, rep.Workspaces, 1)
+		assert.Empty(t, errOut.String())
+	})
+
+	t.Run("prune preview emits nothing and deletes nothing", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		err := runWorkspaces(workspacesOptions{action: workspaceActionPrune, root: root, quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		assert.Empty(t, out.String())
+		assert.Empty(t, errOut.String())
+		assert.DirExists(t, dir)
+	})
+
+	t.Run("prune confirm deletes quietly", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		err := runWorkspaces(workspacesOptions{action: workspaceActionPrune, root: root, confirm: true, quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		assert.Empty(t, out.String())
+		assert.Empty(t, errOut.String())
+		assert.NoDirExists(t, dir)
+	})
+}
+
 func TestListRejectsPruneOnlyFlags(t *testing.T) {
 	root := t.TempDir()
 	for _, args := range [][]string{

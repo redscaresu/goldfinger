@@ -89,6 +89,7 @@ type workspacesOptions struct {
 	purpose   string
 	confirm   bool
 	asJSON    bool
+	quiet     bool
 }
 
 func newWorkspacesCmd() *cobra.Command {
@@ -122,7 +123,8 @@ func newWorkspacesCmd() *cobra.Command {
 				purpose:   purpose,
 				confirm:   confirm,
 				asJSON:    asJSON,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+				quiet:     quietRequested(cmd),
+			}, cmd.OutOrStdout(), humanErr(cmd))
 		},
 	}
 	f := cmd.Flags()
@@ -138,6 +140,7 @@ func newWorkspacesCmd() *cobra.Command {
 // directories, then either lists or prunes. It runs no git and makes no network
 // call — the only mutating action is a confirm-gated delete under prune.
 func runWorkspaces(opts workspacesOptions, out, errOut io.Writer) error {
+	errOut = quietWriter(errOut, opts.quiet)
 	if opts.action == workspaceActionList && (opts.olderThan != 0 || opts.purpose != "" || opts.confirm) {
 		return errors.New("--older-than, --purpose, and --confirm apply only to `workspaces prune`, not `list`")
 	}
@@ -167,6 +170,9 @@ func runWorkspaces(opts workspacesOptions, out, errOut io.Writer) error {
 		}
 		if len(all) == 0 {
 			banner(errOut, "no snapshot workspaces under "+root)
+			return nil
+		}
+		if opts.quiet {
 			return nil
 		}
 		printWorkspaceList(out, all)

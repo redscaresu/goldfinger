@@ -132,6 +132,38 @@ func TestRunMirror(t *testing.T) {
 	})
 }
 
+func TestRunMirrorQuiet(t *testing.T) {
+	sel := models.Selection{Owner: "redscaresu", OwnerType: models.OwnerUser, Repos: []models.Repo{{Owner: "redscaresu", Name: "a"}}}
+	run := func(_ context.Context, _ string, _, _ []string) error { return nil }
+
+	t.Run("default stdout is workspace path and stderr is silent", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, reportOptions{quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		assert.Equal(t, "/tmp/ws\n", out.String())
+		assert.Empty(t, errOut.String())
+	})
+
+	t.Run("report-json stdout is JSON only and stderr is silent", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{}, reportOptions{toStdout: true, quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		var rep mirrorReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+		assert.Equal(t, "/tmp/ws", rep.Workspace)
+		assert.False(t, strings.HasPrefix(out.String(), "/tmp/ws\n"))
+		assert.Empty(t, errOut.String())
+	})
+
+	t.Run("dry-run prints nothing — no workspace was created", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		err := runMirror(context.Background(), run, sel, "/tmp/ws", "tok", mirror.Options{DryRun: true}, reportOptions{quiet: true}, &out, &errOut)
+		require.NoError(t, err)
+		assert.Empty(t, out.String(), "a quiet dry-run must not print a path an agent could mistake for a real workspace")
+		assert.Empty(t, errOut.String())
+	})
+}
+
 func TestBuildMirrorReportCategorises(t *testing.T) {
 	sel := models.Selection{
 		Owner:           "acme",

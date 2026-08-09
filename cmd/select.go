@@ -45,11 +45,13 @@ func newSelectCmd() *cobra.Command {
 		Use:   "select",
 		Short: "Resolve an owner's repos by topic and freeze them as a selection",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			quiet := quietRequested(cmd)
+			errOut := humanErr(cmd)
 			token, source, err := resolveToken(cmd.Context())
 			if err != nil {
 				return err
 			}
-			announceTokenSource(cmd.ErrOrStderr(), source)
+			announceTokenSource(errOut, source)
 			if err := validateTargeting(t); err != nil {
 				return err
 			}
@@ -69,7 +71,8 @@ func newSelectCmd() *cobra.Command {
 				source:          source,
 				allowEmpty:      allowEmpty,
 				asJSON:          asJSON,
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+				quiet:           quiet,
+			}, cmd.OutOrStdout(), errOut)
 		},
 	}
 	addTargetingFlags(cmd, &t)
@@ -93,6 +96,7 @@ type selectOpts struct {
 	source          string // resolved token source, for the auth banner + empty diagnostic
 	allowEmpty      bool
 	asJSON          bool
+	quiet           bool
 }
 
 // selectJSONReport is the --json shape for select: a wrapper carrying the on-disk
@@ -109,6 +113,7 @@ type selectJSONReport struct {
 // with any requested branch-presence facts, and writes the selection lockfile.
 // It is the testable core of the select command.
 func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut io.Writer) error {
+	errOut = quietWriter(errOut, o.quiet)
 	t := o.t
 	banner(errOut, "Resolving selection for "+t.org)
 	login, err := r.Verify(ctx)
@@ -162,6 +167,8 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 		if err := emitJSON(out, selectJSONReport{SelectionPath: o.selectionPath, Selection: sel}); err != nil {
 			return err
 		}
+	} else if o.quiet {
+		fmt.Fprintln(out, o.selectionPath)
 	} else {
 		for _, repo := range selected {
 			fmt.Fprintln(out, repo.FullName())

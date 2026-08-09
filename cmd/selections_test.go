@@ -95,3 +95,33 @@ func TestSelectionsJSON(t *testing.T) {
 		assert.Nil(t, byName["broken"].RepoCount, "an unreadable entry has null repoCount, distinguishing it from a zero-repo selection")
 	})
 }
+
+func TestRunSelectionsQuiet(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	good, err := selection.PathForName("platform")
+	require.NoError(t, err)
+	require.NoError(t, selection.Write(good, models.Selection{
+		Version:    models.SelectionVersion,
+		Owner:      "acme",
+		ResolvedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		Repos:      []models.Repo{{Owner: "acme", Name: "a"}},
+	}))
+	names := []string{"platform"}
+
+	t.Run("non-json emits nothing", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		require.NoError(t, runSelections(names, selectionsOptions{quiet: true}, &out, &errOut))
+		assert.Empty(t, out.String())
+		assert.Empty(t, errOut.String())
+	})
+
+	t.Run("json emits report only", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		require.NoError(t, runSelections(names, selectionsOptions{asJSON: true, quiet: true}, &out, &errOut))
+		var rep selectionsReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &rep))
+		require.Len(t, rep.Selections, 1)
+		assert.Equal(t, "platform", rep.Selections[0].Name)
+		assert.Empty(t, errOut.String())
+	})
+}

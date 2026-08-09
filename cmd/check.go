@@ -30,11 +30,13 @@ func newCheckCmd() *cobra.Command {
 			"refresh) and never touches mirror or apply. Exit status is 0 in sync, " +
 			"1 when drift is found, and 2 on error — usable as a CI gate.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			quiet := quietRequested(cmd)
+			errOut := humanErr(cmd)
 			token, source, err := resolveToken(cmd.Context())
 			if err != nil {
 				return err
 			}
-			announceTokenSource(cmd.ErrOrStderr(), source)
+			announceTokenSource(errOut, source)
 			path, err := resolveSelectionPath(name, selectionPath)
 			if err != nil {
 				return err
@@ -47,7 +49,7 @@ func newCheckCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runCheck(cmd.Context(), c, sel, checkOpts{name: name, asJSON: asJSON}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runCheck(cmd.Context(), c, sel, checkOpts{name: name, asJSON: asJSON, quiet: quiet}, cmd.OutOrStdout(), errOut)
 		},
 	}
 	addSelectionFlags(cmd, &name, &selectionPath)
@@ -61,6 +63,7 @@ func newCheckCmd() *cobra.Command {
 type checkOpts struct {
 	name   string
 	asJSON bool
+	quiet  bool
 }
 
 // checkReport is the --json shape for check (issue #27 §2/§4). ownerTypeFlipped is
@@ -98,6 +101,7 @@ type ownerTypeFlipJSON struct {
 // when drift is found so the process exits non-zero (for CI) without printing an
 // error — the drift report itself has already gone to stdout.
 func runCheck(ctx context.Context, r repoResolver, sel models.Selection, o checkOpts, out, errOut io.Writer) error {
+	errOut = quietWriter(errOut, o.quiet)
 	banner(errOut, "Checking selection for "+sel.Owner+" against live discovery")
 	login, err := r.Verify(ctx)
 	if err != nil {
@@ -131,8 +135,13 @@ func runCheck(ctx context.Context, r repoResolver, sel models.Selection, o check
 	}
 
 	if inSync {
-		done(errOut, fmt.Sprintf("selection is in sync with live discovery (%d repo(s))", len(sel.Repos)))
+		if !o.quiet {
+			done(errOut, fmt.Sprintf("selection is in sync with live discovery (%d repo(s))", len(sel.Repos)))
+		}
 		return nil
+	}
+	if o.quiet {
+		return exitError{code: 1}
 	}
 	renderDrift(out, sel, diff, ownerTypeMoved, liveOwnerType)
 	return exitError{code: 1}

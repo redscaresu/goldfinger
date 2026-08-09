@@ -80,6 +80,31 @@ func TestExecApplyRunDryRunCapturesAndTeesCombinedOutput(t *testing.T) {
 	assert.Contains(t, string(gotErr), "child-stderr", "dry-run stderr should still tee to stderr")
 }
 
+func TestExecApplyRunQuietCapturesWithoutTeeing(t *testing.T) {
+	outR, outW, err := os.Pipe()
+	require.NoError(t, err)
+	errR, errW, err := os.Pipe()
+	require.NoError(t, err)
+
+	origOut, origErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	got, runErr := execApplyRunQuiet(context.Background(), "sh", []string{"-c", "echo child-stdout; echo child-stderr >&2", "--dry-run"}, os.Environ())
+	os.Stdout, os.Stderr = origOut, origErr
+	require.NoError(t, outW.Close())
+	require.NoError(t, errW.Close())
+	require.NoError(t, runErr)
+
+	gotOut, err := io.ReadAll(outR)
+	require.NoError(t, err)
+	gotErr, err := io.ReadAll(errR)
+	require.NoError(t, err)
+
+	assert.Empty(t, string(gotOut), "quiet apply delegate stdout must not reach process stdout")
+	assert.Empty(t, string(gotErr), "quiet apply delegate output must not tee to stderr")
+	assert.Contains(t, string(got), "child-stdout")
+	assert.Contains(t, string(got), "child-stderr")
+}
+
 func TestExecApplyRunLiveStreamsWithoutCapture(t *testing.T) {
 	got, err := execApplyRun(context.Background(), "sh", []string{"-c", "exit 0"}, os.Environ())
 	require.NoError(t, err)
