@@ -116,6 +116,8 @@ func TestSchemasMatchTheirStructs(t *testing.T) {
 		{"applyPlan", reflect.TypeOf(applyPlan{}), applyPlanSchemaObj()},
 		{"applyPlanRepo", reflect.TypeOf(applyPlanRepo{}), applyPlanRepoSchemaObj()},
 		{"mirrorReport", reflect.TypeOf(mirrorReport{}), mirrorReportSchemaObj()},
+		{"mirrorReconciliation", reflect.TypeOf(mirrorReconciliation{}), mirrorReconciliationSchemaObj()},
+		{"mirrorBranchReconciliation", reflect.TypeOf(mirrorBranchReconciliation{}), mirrorBranchReconciliationSchemaObj()},
 		{"mirrorRepoInfo", reflect.TypeOf(mirrorRepoInfo{}), mirrorRepoInfoSchemaObj()},
 		{"capabilities", reflect.TypeOf(capabilities{}), capabilitiesSchemaObj()},
 		{"commandCapability", reflect.TypeOf(commandCapability{}), commandCapSchemaObj()},
@@ -219,6 +221,10 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 		"mirror-report": mirrorReport{
 			Version: mirrorReportVersion, Workspace: "/ws", Owner: "acme",
 			RepoCount: 1, Branch: "dev", BranchFactsNote: branchFactsNote,
+			Reconciliation: mirrorReconciliation{
+				InSelection: 1, OnDisk: 1, NotOnDisk: 0,
+				Branch: &mirrorBranchReconciliation{Present: 1, FellBack: 0, Unknown: 0},
+			},
 			Repos: []mirrorRepoInfo{{Repo: "acme/a", DefaultBranch: "main", BranchStatus: branchStatusHas}},
 		},
 		"capabilities": buildCapabilities(newRootCmd()),
@@ -271,6 +277,20 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 			BatchSize: nil, BatchPause: nil, CommandProgram: "sed", CommandRedacted: true,
 			BaseBranchSrc: "per-repo-default",
 			Repos:         []applyPlanRepo{}, ReposTotal: 0,
+		}},
+		// A no-branch mirror: the reconciliation's optional `branch` object drops out
+		// entirely (no --branch was requested), exercising that the schema marks it
+		// optional and that a shortfall (notOnDisk > 0) validates.
+		{"mirror-report", mirrorReport{
+			Version: mirrorReportVersion, Workspace: "/ws", Owner: "acme",
+			RepoCount: 2,
+			Reconciliation: mirrorReconciliation{
+				InSelection: 2, OnDisk: 1, NotOnDisk: 1,
+			},
+			Repos: []mirrorRepoInfo{
+				{Repo: "acme/a", DefaultBranch: "main", BranchStatus: branchStatusDefault},
+				{Repo: "acme/b", DefaultBranch: "main", BranchStatus: branchStatusDefault},
+			},
 		}},
 		// A manifest-less snapshot: the omitempty purpose/branch/owner fields drop
 		// out entirely, exercising that the schema marks them optional (only

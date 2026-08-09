@@ -479,6 +479,46 @@
         "owner": {
           "type": "string"
         },
+        "reconciliation": {
+          "additionalProperties": false,
+          "properties": {
+            "branch": {
+              "additionalProperties": false,
+              "properties": {
+                "fellBack": {
+                  "type": "integer"
+                },
+                "present": {
+                  "type": "integer"
+                },
+                "unknown": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "present",
+                "fellBack",
+                "unknown"
+              ],
+              "type": "object"
+            },
+            "inSelection": {
+              "type": "integer"
+            },
+            "notOnDisk": {
+              "type": "integer"
+            },
+            "onDisk": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "inSelection",
+            "onDisk",
+            "notOnDisk"
+          ],
+          "type": "object"
+        },
         "repoCount": {
           "type": "integer"
         },
@@ -523,6 +563,7 @@
         "workspace",
         "owner",
         "repoCount",
+        "reconciliation",
         "repos"
       ],
       "title": "mirror --report-json",

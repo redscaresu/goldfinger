@@ -25,6 +25,10 @@ type reportOptions struct {
 	toStdout bool // --report-json: print the report JSON to stdout
 	toFile   bool // --write-report: write <workspace>/goldfinger-mirror.json (only on success)
 	quiet    bool
+	// ghorgLogPath is the 0600 file capturing ghorg's full output for this run (WS3
+	// of #48), "" under --quiet (where the output is discarded). runMirror prints it
+	// so an operator can drill into clone errors after the terse summary.
+	ghorgLogPath string
 }
 
 func newMirrorCmd() *cobra.Command {
@@ -79,9 +83,26 @@ func newMirrorCmd() *cobra.Command {
 			if err := verifyAndAnnouncePrincipal(cmd.Context(), errOut, token); err != nil {
 				return err
 			}
-			run := execRun
-			if quiet {
-				run = execRunQuiet
+			// WS3 of #48: capture ghorg's full output to a 0600 log while still
+			// streaming it live to stderr (the human default is unchanged), so the
+			// terse reconciliation summary has a drill-down artifact to point at. Under
+			// --quiet the output is discarded as before — no live stream, no log, no
+			// path an agent couldn't consume.
+			run := execRunQuiet
+			ghorgLogPath := ""
+			if !quiet {
+				logFile, logErr := newGhorgLog()
+				if logErr != nil {
+					return logErr
+				}
+				// The log is a persistent drill-down artifact (like apply's captured
+				// output), so it is not removed — only the handle is closed once ghorg
+				// has finished writing through the tee.
+				defer func() { _ = logFile.Close() }()
+				ghorgLogPath = logFile.Name()
+				run = func(ctx context.Context, name string, args, env []string) error {
+					return execRunToWriter(ctx, name, args, env, io.MultiWriter(os.Stderr, logFile))
+				}
 			}
 			if err := runMirror(cmd.Context(), run, sel, ws, token, mirror.Options{
 				Branch:      branch,
@@ -89,7 +110,7 @@ func newMirrorCmd() *cobra.Command {
 				CloneDepth:  cloneDepth,
 				NoClean:     noClean,
 				DryRun:      dryRun,
-			}, reportOptions{toStdout: reportJSON, toFile: writeReport, quiet: quiet}, cmd.OutOrStdout(), errOut); err != nil {
+			}, reportOptions{toStdout: reportJSON, toFile: writeReport, quiet: quiet, ghorgLogPath: ghorgLogPath}, cmd.OutOrStdout(), errOut); err != nil {
 				return err
 			}
 			// #29: drop a sidecar manifest in each --purpose snapshot so `workspaces
@@ -111,7 +132,7 @@ func newMirrorCmd() *cobra.Command {
 	f.IntVar(&cloneDepth, "clone-depth", 0, "shallow clone depth (0 = full history). Incompatible with --branch: a shallow clone only fetches each repo's default branch, so --branch would silently fall back to the default")
 	f.BoolVar(&noClean, "no-clean", false, "preserve local changes in existing clones (skip ghorg's git clean on re-sync)")
 	f.BoolVar(&dryRun, "dry-run", false, "show what ghorg would clone without cloning")
-	f.BoolVar(&reportJSON, "report-json", false, "after a successful, non-dry-run mirror, print a machine-readable JSON report (workspace, owner, repo count, requested branch, and per-repo branch status from the lockfile) to stdout")
+	f.BoolVar(&reportJSON, "report-json", false, "after a successful, non-dry-run mirror, print a machine-readable JSON report (workspace, owner, repo count, requested branch, per-repo branch status from the lockfile, and a reconciliation block counting selected-vs-on-disk coverage) to stdout")
 	f.BoolVar(&writeReport, "write-report", false, "after a successful, non-dry-run mirror, write the JSON report to <workspace>/"+mirrorReportName)
 	return cmd
 }
@@ -149,25 +170,42 @@ func runMirror(ctx context.Context, run mirror.Runner, sel models.Selection, ws,
 	}
 	banner(errOut, fmt.Sprintf("Mirroring %d repo(s) into %s", len(sel.Repos), ws))
 	if err := mirror.Mirror(ctx, run, sel, token, opts); err != nil {
+		// Surface the captured log even on failure — a partial clone is exactly when
+		// the ghorg errors matter, and they have already scrolled past on stderr.
+		if report.ghorgLogPath != "" {
+			warn(errOut, "ghorg output (incl. errors) captured at "+report.ghorgLogPath)
+		}
 		return err
 	}
 	done(errOut, fmt.Sprintf("mirror complete → %s/%s", ws, sel.Owner))
-	// goldfinger's own reconciliation line — the honest counterpart to ghorg's
-	// "N new clones" summary and its per-repo "Could not checkout" fall-back noise.
-	reportReconciliation(errOut, sel, ws, opts)
-	return emitMirrorReport(sel, ws, opts, report, out, errOut)
+	if report.ghorgLogPath != "" {
+		done(errOut, "ghorg output captured at "+report.ghorgLogPath)
+	}
+	// A dry-run clones nothing, so an on-disk reconciliation (and the report built
+	// from it) would be misleading — skip both, matching the pre-WS3 behaviour.
+	if opts.DryRun {
+		return nil
+	}
+	// goldfinger's own reconciliation — the honest counterpart to ghorg's "N new
+	// clones" summary and its per-repo "Could not checkout" fall-back noise. The one
+	// read-only stat is shared between the human line and the JSON report (WS3 of
+	// #48), so an agent reading --report-json gets the same coverage/failure truth.
+	rec := reconcile(sel, ws, opts)
+	reportReconciliation(errOut, rec, ws, sel.Owner, report.ghorgLogPath)
+	return emitMirrorReport(sel, ws, opts, rec, report, out, errOut)
 }
 
 // emitMirrorReport renders the mirror report to the requested sinks. It runs
-// only after a successful, non-dry-run mirror: a report is never left claiming a
-// clone that failed, and a dry-run (which clones nothing and may never create
-// the workspace) produces no report — a --write-report into a non-existent
-// workspace would otherwise fail.
-func emitMirrorReport(sel models.Selection, ws string, opts mirror.Options, report reportOptions, out, errOut io.Writer) error {
-	if opts.DryRun || (!report.toStdout && !report.toFile) {
+// only after a successful, non-dry-run mirror (the caller has already returned on
+// a dry-run): a report is never left claiming a clone that failed, and a dry-run
+// produces no report — a --write-report into a possibly non-existent workspace
+// would otherwise fail. The reconciliation is passed in so the report shares the
+// caller's single read-only stat (WS3 of #48).
+func emitMirrorReport(sel models.Selection, ws string, opts mirror.Options, rec reconciliation, report reportOptions, out, errOut io.Writer) error {
+	if !report.toStdout && !report.toFile {
 		return nil
 	}
-	rep := buildMirrorReport(sel, ws, opts)
+	rep := buildMirrorReport(sel, ws, opts, rec)
 	// stdout follows the machine-mode format contract (compact under --quiet); the
 	// persisted report file is an artifact a human may open, so it stays indented
 	// regardless. Same shape either way — only whitespace differs.

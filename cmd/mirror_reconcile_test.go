@@ -97,7 +97,8 @@ func TestReportReconciliationFullMirrorSucceeds(t *testing.T) {
 	mkRepoDirs(t, ws, "acme", "a", "b")
 
 	var errOut bytes.Buffer
-	reportReconciliation(&errOut, sel, ws, mirror.Options{})
+	rec := reconcile(sel, ws, mirror.Options{})
+	reportReconciliation(&errOut, rec, ws, sel.Owner, "")
 	s := errOut.String()
 	assert.Contains(t, s, "reconciliation: in selection: 2 | on disk: 2")
 	assert.NotContains(t, s, "under-covered", "a full mirror must not warn about a shortfall")
@@ -109,20 +110,24 @@ func TestReportReconciliationWarnsOnShortfall(t *testing.T) {
 	mkRepoDirs(t, ws, "acme", "a") // "gone" never landed
 
 	var errOut bytes.Buffer
-	reportReconciliation(&errOut, sel, ws, mirror.Options{})
+	rec := reconcile(sel, ws, mirror.Options{})
+	reportReconciliation(&errOut, rec, ws, sel.Owner, "")
 	s := errOut.String()
 	assert.Contains(t, s, "in selection: 2 | on disk: 1")
 	assert.Contains(t, s, "1 selected repo(s) are not on disk")
 	assert.Contains(t, s, "under-covered")
 }
 
-func TestReportReconciliationSkipsDryRun(t *testing.T) {
-	// A dry-run clones nothing, so an on-disk count of 0 would falsely read as a
-	// total shortfall — the reconciliation line is suppressed entirely.
+func TestReportReconciliationShortfallPointsAtGhorgLog(t *testing.T) {
+	// When a ghorg log was captured, the shortfall hint names it so an operator
+	// can drill into the clone errors behind the terse summary.
 	ws := t.TempDir()
-	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a"}}}
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a"}, {Owner: "acme", Name: "gone"}}}
+	mkRepoDirs(t, ws, "acme", "a")
 
 	var errOut bytes.Buffer
-	reportReconciliation(&errOut, sel, ws, mirror.Options{DryRun: true})
-	assert.Empty(t, errOut.String(), "a dry-run emits no reconciliation line")
+	rec := reconcile(sel, ws, mirror.Options{})
+	reportReconciliation(&errOut, rec, ws, sel.Owner, "/tmp/goldfinger-mirror-output-xyz.log")
+	s := errOut.String()
+	assert.Contains(t, s, "check the captured ghorg log for clone errors: /tmp/goldfinger-mirror-output-xyz.log")
 }

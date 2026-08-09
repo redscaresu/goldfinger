@@ -246,6 +246,14 @@ finish. With `--branch`, `branch present` / `fell back` (and `unknown`, when any
 recast ghorg's per-repo `Could not checkout <branch>` noise as the expected
 fall-backs they are — the same facts as `--report-json`'s `branchStatus` below.
 
+ghorg's live output still streams to stderr as before, but goldfinger also
+**captures the full run to a `0600` temp log** and prints its path (`✓ ghorg
+output captured at …`), so after the terse reconciliation summary you can drill
+into the clone errors behind a shortfall without scrolling back. On a failed
+mirror the same path is surfaced with a `⚠` — a partial clone is exactly when
+those errors matter. (Under `--quiet` the output is discarded, as before: no
+live stream, no log.)
+
 To know *which* repos actually had the branch (rather than silently falling
 back), record it at `select` time with `--branch-presence <name>` and ask
 `mirror` for a report:
@@ -257,10 +265,12 @@ back), record it at `select` time with `--branch-presence <name>` and ask
 - `--write-report` writes the same JSON to `<workspace>/goldfinger-mirror.json`
   (only on success — a failed clone leaves no report).
 
-The report is built **purely from the lockfile** — goldfinger runs no `git` and
-re-runs no discovery — so every fact in it (`workspace`, `owner`, `repoCount`,
-the requested `branch`, and each repo's `branchStatus`) is knowable without
-touching a clone:
+Every fact in it comes from the two sources goldfinger can read without running
+`git` or re-running discovery: the lockfile (`workspace`, `owner`, `repoCount`,
+the requested `branch`, and each repo's `branchStatus`) and a read-only
+filesystem stat (the `reconciliation` block — the same coverage counts as the
+stderr line above, so an agent parsing `--report-json` under `--quiet` gets them
+too):
 
 ```json
 {
@@ -269,12 +279,26 @@ touching a clone:
   "repoCount": 2,
   "branch": "dev",
   "branchFactsNote": "branchStatus values come from branch presence recorded at selection time (via `select --branch-presence`) and can drift; \"unknown\" means the branch was not checked then — goldfinger does not guess it here.",
+  "reconciliation": {
+    "inSelection": 2,
+    "onDisk": 2,
+    "notOnDisk": 0,
+    "branch": { "present": 1, "fellBack": 1, "unknown": 0 }
+  },
   "repos": [
     { "repo": "mycompany/billing", "defaultBranch": "main", "branchStatus": "has-branch" },
     { "repo": "mycompany/web", "defaultBranch": "main", "branchStatus": "falls-back-to-default" }
   ]
 }
 ```
+
+In `reconciliation`, `inSelection` is the lockfile count, `onDisk` is how many
+repos actually landed under `<workspace>/<owner>`, and `notOnDisk` is the
+shortfall (repos that failed to land — a real coverage gap, distinct from a
+branch fall-back). The nested `branch` object appears only when `--branch` was
+requested (its `present`/`fellBack`/`unknown` tallies sum to `inSelection`); a
+no-branch mirror carries no `branch` object rather than a block of ambiguous
+zeros.
 
 `branchStatus` is `has-branch` (the branch was present at select time, or is the
 repo's own default), `falls-back-to-default` (absent at select time, so ghorg
@@ -572,7 +596,7 @@ agents](#designed-for-agents-reducing-token-consumption).
 | `check` | `--json` | `{version, name?, inSync, added, removed:[{repo,reason}], defaultBranchMoved:[{repo,from,to}], ownerTypeFlipped:{from,to}\|null}`. Exit code is unchanged (`0`/`1`/`2`). |
 | `selections` | `--json` | `{version, selections:[{name, path, owner, repoCount, digest, resolvedAt}]}`; `digest` is the short repo-set fingerprint (readable entries only); an unreadable entry carries an `error` field instead of being dropped; an empty registry is `selections: []`, not an error. |
 | `workspaces` | `--json` | `{version, root, action, pruned, workspaces:[{path, purpose?, branch?, stamp?, owner?, sizeBytes, createdAt?, manifestPresent}]}` — `list` reports every snapshot, `prune` the matched subset (`pruned:true` once `--confirm` deleted them). See [`workspaces`](#goldfinger-workspaces). |
-| `mirror` | `--report-json` | `{version, workspace, owner, repoCount, branch?, repos:[…]}` (see [`mirror`](#goldfinger-mirror)). |
+| `mirror` | `--report-json` | `{version, workspace, owner, repoCount, branch?, reconciliation:{inSelection, onDisk, notOnDisk, branch?:{present, fellBack, unknown}}, repos:[…]}` (see [`mirror`](#goldfinger-mirror)). |
 | `apply` | `--plan-json` | `{version, dry_run, sign_mode, branch, pr_title, commit_message, pr_body_present, labels, reviewers, draft, batch_size, batch_pause, command_program, command_redacted, base_branch_source, repos:[{repo, base_branch_recorded}], repos_total}` — the invocation goldfinger will make, **not** the diff. See [`apply`](#goldfinger-apply). |
 | `guide` | `--json` | `{version, commands:[{name, summary, requiredFlags, flags:[{name, usage, required, values?, default?}], example, notes?}]}` — a machine-consumable catalogue of the CLI surface, so an agent can discover every command, its flags, which are required, a flag's enum values, and a canonical example without parsing the prose playbook. Command names, flag names, and usage text are derived from the live command tree; requiredness, enum values, notes, and the example are curated and kept in sync with the validators by tests. |
 | `schema` | *(always JSON)* | `{version, schemas:{lockfile, select, check, selections, doctor, apply-plan, mirror-report, capabilities, workspaces, workspace-manifest, error}}` — the [JSON Schema](https://json-schema.org/) (draft 2020-12) for the lockfile and every *other* payload in this table (including the machine-mode `error` object below), so a consumer can **validate** goldfinger's output rather than infer its shape. Read-only and offline: no token, no network, no git. The schemas are hand-authored but pinned to the Go types by a golden test and a reflection test, so they cannot silently drift. Where `guide --json` describes the *input* surface, `schema` describes the *output* surface. |

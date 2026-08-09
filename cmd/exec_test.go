@@ -111,6 +111,22 @@ func TestExecApplyRunLiveStreamsWithoutCapture(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+// TestNewGhorgLogIsOwnerOnly locks the 0600 perm on the captured mirror output
+// log — it can carry ghorg clone errors that mention repo names, so it must not
+// be world-readable, matching apply's captured-output posture.
+func TestNewGhorgLogIsOwnerOnly(t *testing.T) {
+	f, err := newGhorgLog()
+	require.NoError(t, err)
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+	}()
+
+	info, err := os.Stat(f.Name())
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the captured mirror output log must be owner-only")
+}
+
 func TestHasArg(t *testing.T) {
 	assert.True(t, hasArg([]string{"run", "--dry-run"}, "--dry-run"))
 	assert.False(t, hasArg([]string{"run", "--dry-run=false"}, "--dry-run"))

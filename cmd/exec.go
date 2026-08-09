@@ -61,6 +61,23 @@ func execApplyRunToWriter(ctx context.Context, name string, args, env []string, 
 	return buf.Bytes(), err
 }
 
+// newGhorgLog creates the 0600 temp file that captures a mirror run's full ghorg
+// output (WS3 of #48). Like apply's captured output it is a persistent drill-down
+// artifact — the caller closes the handle when ghorg finishes but does not remove
+// the file, so an operator can inspect clone errors after the terse summary.
+func newGhorgLog() (*os.File, error) {
+	f, err := os.CreateTemp("", "goldfinger-mirror-output-*.log")
+	if err != nil {
+		return nil, fmt.Errorf("create mirror output log: %w", err)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return nil, fmt.Errorf("secure mirror output log perms: %w", err)
+	}
+	return f, nil
+}
+
 func hasArg(args []string, want string) bool {
 	for _, arg := range args {
 		if arg == want {
