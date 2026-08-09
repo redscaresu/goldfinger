@@ -40,6 +40,7 @@ func newSelectCmd() *cobra.Command {
 		branchesToCheck []string
 		allowEmpty      bool
 		asJSON          bool
+		list            bool
 	)
 	cmd := &cobra.Command{
 		Use:   "select",
@@ -71,6 +72,7 @@ func newSelectCmd() *cobra.Command {
 				source:          source,
 				allowEmpty:      allowEmpty,
 				asJSON:          asJSON,
+				list:            list,
 				quiet:           quiet,
 			}, cmd.OutOrStdout(), errOut)
 		},
@@ -83,6 +85,8 @@ func newSelectCmd() *cobra.Command {
 		"write a lockfile even when the filter matches zero repos (default: a zero-repo result is an error, since it usually means a wrong token/owner/topic rather than an intended empty fleet)")
 	cmd.Flags().BoolVar(&asJSON, "json", false,
 		"emit the written selection as JSON on stdout (a {selectionPath, selection} wrapper; the selection is the full lockfile) instead of the plain repo list; banners stay on stderr")
+	cmd.Flags().BoolVar(&list, "list", false,
+		"echo every selected repo's full name on stdout (default: stdout stays terse — the count is on stderr and the full list is in the lockfile — so a large selection doesn't dump one line per repo)")
 	return cmd
 }
 
@@ -96,6 +100,7 @@ type selectOpts struct {
 	source          string // resolved token source, for the auth banner + empty diagnostic
 	allowEmpty      bool
 	asJSON          bool
+	list            bool
 	quiet           bool
 }
 
@@ -163,16 +168,23 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 		return err
 	}
 
-	if o.asJSON {
+	// Output shape, terse-by-default (issue #48 WS7): --json owns stdout with the
+	// full wrapper; --list explicitly echoes the repo names (the old default, now
+	// opt-in); quiet keeps stdout = the lockfile path (the machine capture
+	// contract). Otherwise stdout stays empty — the list is already in the
+	// lockfile and the count is on the stderr done() line — so an N-repo selection
+	// doesn't force a driving agent to read N lines it can get from the file.
+	switch {
+	case o.asJSON:
 		if err := emitJSON(out, selectJSONReport{SelectionPath: o.selectionPath, Selection: sel}, o.quiet); err != nil {
 			return err
 		}
-	} else if o.quiet {
-		fmt.Fprintln(out, o.selectionPath)
-	} else {
+	case o.list:
 		for _, repo := range selected {
 			fmt.Fprintln(out, repo.FullName())
 		}
+	case o.quiet:
+		fmt.Fprintln(out, o.selectionPath)
 	}
 	done(errOut, fmt.Sprintf("%d repo(s) written to %s", len(selected), o.selectionPath))
 	return nil

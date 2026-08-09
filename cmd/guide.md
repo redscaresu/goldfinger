@@ -41,8 +41,10 @@ WORKFLOW
   1. Select — resolve and freeze the repo set:
        goldfinger select --org <owner> --all-repos
        goldfinger select --org <owner> --topic platform --topic payments
-     Writes ./goldfinger.selection (JSON: owner/name list + provenance) and
-     prints the set. --org accepts a GitHub org OR user.
+     Writes ./goldfinger.selection (JSON: owner/name list + provenance). --org
+     accepts a GitHub org OR user. stdout is terse by default — the count is on
+     stderr and the full list is in the lockfile; add --list to echo every repo's
+     full name on stdout, or --json for the full wrapper.
 
      If you plan to `mirror --branch <b>` (e.g. dev), add `--branch-presence <b>`
      here so goldfinger records (read-only) which repos actually have that branch
