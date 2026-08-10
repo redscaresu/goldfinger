@@ -63,7 +63,11 @@ WORKFLOW
      fleet; NOT needed to open PRs. apply clones on its own, see step 3):
        goldfinger mirror
      Repos land in <workspace>/<owner> (default workspace ~/goldfinger).
-     Re-run any time to refresh (ghorg pulls existing clones).
+     Re-run any time to refresh: ghorg pulls existing clones instead of
+     re-cloning, and by default also `git clean`s each one — so the persistent
+     workspace stays a pristine reflection of upstream and any local edits you
+     made in it are discarded. Pass --no-clean to keep them, or use --purpose
+     (below) to work in a throwaway timestamped snapshot instead.
 
      When ghorg finishes, goldfinger prints its own reconciliation line, e.g.
        ✓ reconciliation: in selection: 59 | on disk: 59 | branch present: 15 | fell back: 44
