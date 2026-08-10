@@ -71,7 +71,9 @@ WORKFLOW
      repos, so a re-mirror of an unchanged fleet says "0 new clones" while all 59
      are present. "in selection" is the lockfile count; "on disk" is a read-only
      count of how many of those repos actually landed under <workspace>/<owner>
-     (no git). If on disk < in selection, goldfinger warns (⚠) that the mirror
+     as real clones — goldfinger checks for a .git entry, so a leftover or
+     half-written directory from an interrupted mirror is not miscounted as
+     covered (no git is run, just a stat). If on disk < in selection, goldfinger warns (⚠) that the mirror
      under-covered the selection. With --branch, "branch present"/"fell back"
      (and "unknown", when any) explain ghorg's per-repo "Could not checkout
      <branch>" lines as expected fall-backs, not failures — same facts as the
@@ -149,7 +151,10 @@ WORKFLOW
      which repos would change, report no change, or error rather than trusting
      the snapshot you inspected. Non-interactive multi-gitter dry-run does NOT
      emit a unified diff; goldfinger prints a status digest plus a full-output
-     file path.
+     file path. If multi-gitter's output ever fails to match a format goldfinger
+     recognises (a version drift, or a run where every repo errored), the digest
+     says so — "could not parse … per-repo status unavailable" — instead of
+     guessing a per-repo verdict; read the full-output file in that case.
      With --base-branch omitted, each PR targets that repo's own default branch,
      so a mixed dev/main selection routes correctly per repo.
 
@@ -183,7 +188,11 @@ PREFLIGHT (doctor)
     - auth-shadow  : warns if an ambient GITHUB_TOKEN/GH_TOKEN may be shadowing
                      your gh login (the wrong-identity footgun above).
     - ghorg /      : each child tool's PATH location + version, or a fail with an
-      multi-gitter   install hint if missing.
+      multi-gitter   install hint if missing. multi-gitter is also checked against
+                     goldfinger's known-good version floor (currently 0.63.1, the
+                     version apply's local-signing and dry-run parsing were
+                     verified against) — an older or unreadable version warns
+                     (advisory, never a fail).
     - git-identity : user.name/user.email resolved from system+global+env config
                      (NOT via git — parsed directly). A warn if unset, because
                      apply would then silently make no commit.

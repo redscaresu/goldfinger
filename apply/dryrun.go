@@ -26,6 +26,11 @@ type DryRunDigest struct {
 	Unchanged int
 	Errored   int
 	Repos     []RepoDryRunStatus
+	// Unparseable is set when none of multi-gitter's recognised result sections
+	// appeared in the output, so the per-repo buckets can't be trusted (see
+	// SummarizeDryRunOutput). A caller must not present a confident digest when
+	// this is true — it means the format drifted (or, safely, every repo errored).
+	Unparseable bool
 }
 
 // RepoDryRunStatus is one selected repo's dry-run outcome.
@@ -54,11 +59,12 @@ func SummarizeDryRunOutput(repos []models.Repo, output []byte) DryRunDigest {
 	}
 
 	var bucketStatus, bucketDetail string
+	sawKnownHeader := false
 	reader := bufio.NewReader(bytes.NewReader(output))
 	for {
 		raw, err := reader.ReadString('\n')
 		if raw != "" {
-			parseDryRunLine(stripANSI(strings.TrimRight(raw, "\r\n")), index, digest.Repos, &bucketStatus, &bucketDetail)
+			parseDryRunLine(stripANSI(strings.TrimRight(raw, "\r\n")), index, digest.Repos, &bucketStatus, &bucketDetail, &sawKnownHeader)
 		}
 		if err != nil {
 			if err == io.EOF {
@@ -78,10 +84,23 @@ func SummarizeDryRunOutput(repos []models.Repo, output []byte) DryRunDigest {
 			digest.Errored++
 		}
 	}
+
+	// Fail-safe against multi-gitter output drift. Every real run groups repos
+	// under headers we recognise — at minimum a successful-run or no-change
+	// section. If not one recognised header appeared, this isn't the format the
+	// parser understands (a future multi-gitter may have reworked repocounter's
+	// block), and the default bucket would otherwise relabel every listed repo as
+	// "error" — a confident, wrong answer. Flag the whole digest unparseable so the
+	// caller degrades honestly instead. This also (safely) trips on the rare
+	// all-errors run, which carries no positive section: erring toward "unsure" is
+	// the intended failure direction, never confident-but-wrong.
+	if len(repos) > 0 && !sawKnownHeader {
+		digest.Unparseable = true
+	}
 	return digest
 }
 
-func parseDryRunLine(line string, index map[string]int, statuses []RepoDryRunStatus, bucketStatus, bucketDetail *string) {
+func parseDryRunLine(line string, index map[string]int, statuses []RepoDryRunStatus, bucketStatus, bucketDetail *string, sawKnownHeader *bool) {
 	if strings.HasPrefix(line, "  ") {
 		if *bucketStatus == "" {
 			return
@@ -101,18 +120,29 @@ func parseDryRunLine(line string, index map[string]int, statuses []RepoDryRunSta
 	}
 	if !strings.HasPrefix(line, " ") && strings.HasSuffix(trimmed, ":") {
 		header := strings.TrimSuffix(trimmed, ":")
-		*bucketStatus, *bucketDetail = dryRunBucket(header)
+		status, detail, known := dryRunBucket(header)
+		*bucketStatus, *bucketDetail = status, detail
+		if known {
+			*sawKnownHeader = true
+		}
 	}
 }
 
-func dryRunBucket(header string) (status, detail string) {
+// dryRunBucket maps a multi-gitter section header to a per-repo status. known is
+// true only for the headers goldfinger recognises by name (the successful-run and
+// no-change sections); any other header falls to the error bucket AND reports
+// known=false, which SummarizeDryRunOutput uses to detect a wholesale format
+// drift (see its fail-safe). multi-gitter groups errored repos under the error
+// text itself, so an unrecognised header is legitimately an error category — the
+// digest is only distrusted when NO known header appears at all.
+func dryRunBucket(header string) (status, detail string, known bool) {
 	switch header {
 	case "Repositories with a successful run":
-		return DryRunWouldChange, ""
+		return DryRunWouldChange, "", true
 	case "No data was changed":
-		return DryRunNoChange, ""
+		return DryRunNoChange, "", true
 	default:
-		return DryRunError, header
+		return DryRunError, header, false
 	}
 }
 

@@ -12,12 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mkRepoDirs creates <ws>/<owner>/<name> for each name, mimicking where ghorg
-// lands clones, so reconcile's read-only on-disk count has something to see.
+// mkRepoDirs creates <ws>/<owner>/<name>/.git for each name, mimicking where
+// ghorg lands clones (a real clone has a .git dir), so reconcile's read-only
+// on-disk count sees genuine clones rather than bare directories.
 func mkRepoDirs(t *testing.T, ws, owner string, names ...string) {
 	t.Helper()
 	for _, n := range names {
-		require.NoError(t, os.MkdirAll(filepath.Join(ws, owner, n), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(ws, owner, n, ".git"), 0o755))
 	}
 }
 
@@ -48,6 +49,35 @@ func TestReconcileRequiresADirNotJustAPath(t *testing.T) {
 	rec := reconcile(sel, ws, mirror.Options{})
 	assert.Equal(t, 0, rec.onDisk, "a file at the repo path is not a clone and must not count")
 	assert.Equal(t, 1, rec.shortfall())
+}
+
+func TestReconcileRequiresAGitDirNotJustAnyDir(t *testing.T) {
+	// A leftover or half-written directory from an earlier interrupted mirror —
+	// one that exists but has no .git — must NOT count as covered. This is the
+	// core of the "authoritative coverage" honesty fix: only a real clone counts.
+	ws := t.TempDir()
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{
+		{Owner: "acme", Name: "landed"}, {Owner: "acme", Name: "stale"},
+	}}
+	mkRepoDirs(t, ws, "acme", "landed")                                          // real clone (.git present)
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "acme", "stale"), 0o755))   // bare dir, no .git
+
+	rec := reconcile(sel, ws, mirror.Options{})
+	assert.Equal(t, 1, rec.onDisk, "a directory without .git is not a clone and must not count")
+	assert.Equal(t, 1, rec.shortfall(), "the stale dir is a real coverage shortfall")
+}
+
+func TestReconcileAcceptsGitfileWorktree(t *testing.T) {
+	// A .git *file* (a gitfile-linked worktree) is still a real clone and must
+	// count, so the check doesn't over-narrow to only ghorg's usual .git dir.
+	ws := t.TempDir()
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "wt"}}}
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "acme", "wt"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "acme", "wt", ".git"), []byte("gitdir: /elsewhere\n"), 0o644))
+
+	rec := reconcile(sel, ws, mirror.Options{})
+	assert.Equal(t, 1, rec.onDisk, "a .git file (worktree) is still a clone")
+	assert.Equal(t, 0, rec.shortfall())
 }
 
 func TestReconcileBranchTallies(t *testing.T) {
