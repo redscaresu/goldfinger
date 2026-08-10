@@ -310,6 +310,21 @@ func TestPruneRejectsNegativeDaySugar(t *testing.T) {
 	assert.DirExists(t, dir, "a rejected filter must not delete anything")
 }
 
+func TestPruneRejectsOverflowingDaySugar(t *testing.T) {
+	// Regression: a day/week count large enough to overflow int64 nanoseconds used
+	// to wrap silently — 213504d wrapped to ~25m, slipping past the non-negative
+	// guard so `prune --confirm` would match (and delete) almost every snapshot.
+	// The out-of-range age must be rejected at flag-parse time, deleting nothing.
+	root := t.TempDir()
+	created := time.Date(2026, 8, 5, 10, 11, 12, 131000000, time.UTC)
+	dir := makeSnapshot(t, root, "audit-2026-08-05-101112.131", "audit", "", created, 100)
+
+	_, err := executeCmd(t, "tok", "workspaces", "prune", "--root", root, "--older-than", "213504d", "--confirm")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "out of range")
+	assert.DirExists(t, dir, "an overflowing age must be rejected, never wrap into a delete-everything filter")
+}
+
 func TestPruneRejectsNegativeOlderThan(t *testing.T) {
 	root := t.TempDir()
 	created := time.Date(2026, 8, 5, 10, 11, 12, 131000000, time.UTC)
