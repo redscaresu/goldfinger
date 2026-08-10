@@ -277,6 +277,12 @@ func TestParseAgeDuration(t *testing.T) {
 		{in: "7days", wantErr: true},
 		{in: "d", wantErr: true},
 		{in: "abc", wantErr: true},
+		// Overflow guard: n*unit must not wrap int64 nanoseconds. 106752 days and
+		// 15251 weeks are each one step past the largest value that fits, and a huge
+		// negative would wrap toward 0 and slip past the negative-age reject.
+		{in: "106752d", wantErr: true},
+		{in: "15251w", wantErr: true},
+		{in: "-106752d", wantErr: true},
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {

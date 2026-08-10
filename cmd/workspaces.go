@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,6 +65,16 @@ func parseAgeDuration(s string) (time.Duration, error) {
 		unit := 24 * time.Hour
 		if m[2] == "w" {
 			unit = 7 * 24 * time.Hour
+		}
+		// Guard the multiply: n*unit is int64 nanoseconds and a large n silently
+		// wraps (e.g. 213504d would wrap to ~25m and slip past the non-negative
+		// age check, matching almost every snapshot instead of effectively none;
+		// a huge negative would wrap toward 0 and bypass the negative-age reject).
+		// Reject an out-of-range age plainly rather than let it wrap into a
+		// dangerous prune filter.
+		unitNanos := int64(unit)
+		if n > math.MaxInt64/unitNanos || n < math.MinInt64/unitNanos {
+			return 0, fmt.Errorf("duration %q is out of range", s)
 		}
 		return time.Duration(n) * unit, nil
 	}
