@@ -163,14 +163,26 @@ echo "==> workspaces prune --confirm (unfiltered, clears the remaining snapshot)
 "$GF" workspaces prune --root "$WSROOT" --confirm >/dev/null
 [ ! -d "$BDIR" ] || fail "unfiltered prune --confirm did not remove $BDIR"
 
-echo "==> apply --dry-run (must not push a branch)"
-"$GF" apply --selection "$SELECTION" --branch "$BRANCH" \
+echo "==> apply --dry-run (must not push a branch; digest must parse the real multi-gitter output)"
+# Capture the digest (stderr) while discarding stdout: 2>&1 first points stderr
+# at the substitution, then >/dev/null drops stdout — so DRYRUN_OUT is stderr only.
+DRYRUN_OUT="$("$GF" apply --selection "$SELECTION" --branch "$BRANCH" \
 	--commit-message "goldfinger e2e" --pr-title "goldfinger e2e" \
 	--sign none \
-	-- sh -c "printf '%s\n' '$MARKER' >> README.md" >/dev/null
+	-- sh -c "printf '%s\n' '$MARKER' >> README.md" 2>&1 >/dev/null)"
 if gh api "repos/$OWNER/$REPO/git/refs/heads/$BRANCH" >/dev/null 2>&1; then
 	fail "dry-run pushed branch $BRANCH — it must not"
 fi
+# Live drift canary for the dry-run parser (issue #59): the digest must reflect
+# the one changed repo, and must NOT fall back to the "could not parse" fail-safe.
+# This ties goldfinger's parser to whatever multi-gitter version CI installs, so a
+# future repocounter-output rework trips e2e here as an early warning instead of
+# silently degrading to "unparseable" for operators.
+if echo "$DRYRUN_OUT" | grep -qi "could not parse"; then
+	fail "dry-run digest hit the unparseable fail-safe — multi-gitter output drifted from the parser: $DRYRUN_OUT"
+fi
+echo "$DRYRUN_OUT" | grep -q "would change" \
+	|| fail "dry-run digest did not report the changed repo (expected '... would change'): $DRYRUN_OUT"
 
 echo "==> apply --dry-run=false --confirm (opens a real PR)"
 "$GF" apply --selection "$SELECTION" --branch "$BRANCH" \

@@ -112,7 +112,7 @@ var curatedCapabilities = map[string]curatedCommand{
 		notes: []string{
 			"a script command is required after -- (e.g. -- sed -i ...)",
 			"apply defaults to a dry-run; a real run additionally requires --dry-run=false AND --confirm",
-			"dry-run prints a per-repo status digest (would-change, no-change, error); normally on stderr with a full-output temp file path, or on stdout (no temp file) under --quiet unless --plan-json owns stdout. multi-gitter's non-interactive dry-run does not emit a diff",
+			"dry-run prints a per-repo status digest (would-change, no-change, error), or reports that multi-gitter's output could not be parsed (format drift or an all-errors run) instead of guessing; normally on stderr with a full-output temp file path, or on stdout (no temp file) under --quiet unless --plan-json owns stdout. multi-gitter's non-interactive dry-run does not emit a diff",
 			"--pr-body and --pr-body-file are mutually exclusive",
 			nameSelectionExclusiveNote,
 			nameShapeNote,

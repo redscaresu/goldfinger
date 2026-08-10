@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +29,22 @@ const (
 // doctorProbeTimeout bounds each child-tool `version` probe so a wedged binary
 // can't hang the preflight.
 const doctorProbeTimeout = 5 * time.Second
+
+// multiGitterKnownGoodFloor is the lowest multi-gitter version goldfinger's apply
+// behaviours were verified against. Two behaviours silently depend on it: the
+// `--sign local` path assumes multi-gitter commits via `--git-type=cmd` the way
+// v0.63.1 does (apply/apply.go), and the dry-run digest parser matches v0.63.1's
+// repocounter output (apply/dryrun.go). doctor WARNS (never fails) when the probed
+// version is below this floor or can't be read, turning otherwise-silent
+// behavioural drift into a visible advisory. It is a floor, not a capped range: a
+// newer multi-gitter is presumed compatible (and the dry-run parser already fails
+// safe if its output drifts), so warning on every future release would be noise.
+const multiGitterKnownGoodFloor = "0.63.1"
+
+// semverRE extracts a major.minor.patch triple from a tool's version string
+// (e.g. "multi-gitter version 0.63.1"), ignoring any surrounding text and a
+// leading "v". A best-effort match is enough for a floor comparison.
+var semverRE = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
 
 // doctorCheck is one preflight result. Fix is a concrete next action, empty when
 // the check passed cleanly.
@@ -121,8 +139,8 @@ func gatherDoctorChecks(ctx context.Context, deps doctorDeps) []doctorCheck {
 	var checks []doctorCheck
 	checks = append(checks, authChecks(ctx, deps)...)
 	checks = append(checks,
-		toolCheck(ctx, deps, "ghorg", "https://github.com/gabrie30/ghorg#installation"),
-		toolCheck(ctx, deps, "multi-gitter", "https://github.com/lindell/multi-gitter#installation"),
+		toolCheck(ctx, deps, "ghorg", "https://github.com/gabrie30/ghorg#installation", ""),
+		toolCheck(ctx, deps, "multi-gitter", "https://github.com/lindell/multi-gitter#installation", multiGitterKnownGoodFloor),
 	)
 	cfg := deps.loadConfig()
 	checks = append(checks, gitIdentityCheck(cfg), signingCheck(cfg))
@@ -179,8 +197,11 @@ func authChecks(ctx context.Context, deps doctorDeps) []doctorCheck {
 
 // toolCheck reports whether a delegated child tool is on PATH, with its version
 // when it can be probed. A missing tool is a fail for the command that needs it;
-// doctor reports both so the operator sees the whole picture in one run.
-func toolCheck(ctx context.Context, deps doctorDeps, name, installHint string) doctorCheck {
+// doctor reports both so the operator sees the whole picture in one run. When
+// versionFloor is non-empty, the probed version is range-checked against it and a
+// below-floor (or unreadable) version downgrades the result to an advisory warn —
+// never a fail, since the tool may still work and the operator chose it.
+func toolCheck(ctx context.Context, deps doctorDeps, name, installHint, versionFloor string) doctorCheck {
 	path, version, ok := deps.probeTool(ctx, name)
 	if !ok {
 		return doctorCheck{
@@ -194,7 +215,70 @@ func toolCheck(ctx context.Context, deps doctorDeps, name, installHint string) d
 	if version != "" {
 		detail = fmt.Sprintf("%s (%s)", version, path)
 	}
-	return doctorCheck{Check: name, Status: statusOK, Detail: detail}
+	check := doctorCheck{Check: name, Status: statusOK, Detail: detail}
+	if versionFloor != "" {
+		if warnDetail, fix, warn := versionFloorWarning(version, versionFloor); warn {
+			check.Status = statusWarn
+			check.Detail = detail + " — " + warnDetail
+			check.Fix = fix
+		}
+	}
+	return check
+}
+
+// versionFloorWarning reports whether a probed tool version is below goldfinger's
+// known-good floor, or can't be read at all, returning the advisory detail/fix to
+// attach. warn is false only when the version parses AND meets the floor. It never
+// drives a failure — an old or unreadable version is a warning, not a hard gate.
+func versionFloorWarning(version, floor string) (detail, fix string, warn bool) {
+	got, ok := parseSemver(version)
+	if !ok {
+		return fmt.Sprintf("could not read a version to check against goldfinger's known-good floor %s "+
+			"(apply's local-signing and dry-run parsing were verified against %s)", floor, floor), "", true
+	}
+	want, ok := parseSemver(floor)
+	if !ok {
+		// floor is a compile-time constant; a malformed one is a programming error,
+		// but a preflight must not panic — treat it as "can't verify" and stay quiet.
+		return "", "", false
+	}
+	if compareSemver(got, want) < 0 {
+		return fmt.Sprintf("below goldfinger's known-good floor %s — apply's local-signing (--git-type=cmd) and "+
+			"dry-run parsing were verified against %s; an older version may behave differently", floor, floor),
+			"upgrade multi-gitter to >= " + floor, true
+	}
+	return "", "", false
+}
+
+// parseSemver best-effort-extracts a major.minor.patch triple from a version
+// string. ok is false when no triple is present.
+func parseSemver(s string) ([3]int, bool) {
+	m := semverRE.FindStringSubmatch(s)
+	if m == nil {
+		return [3]int{}, false
+	}
+	var v [3]int
+	for i := 0; i < 3; i++ {
+		n, err := strconv.Atoi(m[i+1])
+		if err != nil {
+			return [3]int{}, false
+		}
+		v[i] = n
+	}
+	return v, true
+}
+
+// compareSemver returns -1, 0, or 1 as a orders before, equal to, or after b.
+func compareSemver(a, b [3]int) int {
+	for i := 0; i < 3; i++ {
+		switch {
+		case a[i] < b[i]:
+			return -1
+		case a[i] > b[i]:
+			return 1
+		}
+	}
+	return 0
 }
 
 // gitIdentityCheck reports whether a committing identity is configured. A present

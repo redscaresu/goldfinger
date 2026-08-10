@@ -93,8 +93,11 @@ func TestRunApply(t *testing.T) {
 
 	t.Run("propagates delegate error", func(t *testing.T) {
 		t.Setenv("TMPDIR", t.TempDir())
+		// Realistic multi-gitter output: a recognised section alongside the error
+		// section, so the digest parses and still attributes the per-repo error
+		// (the fail-safe only trips when NO recognised section appears at all).
 		run := func(_ context.Context, _ string, _, _ []string) ([]byte, error) {
-			return []byte("Clone failed:\n  acme/a\n"), errors.New("mg blew up")
+			return []byte("No data was changed:\n  acme/other\nClone failed:\n  acme/a\n"), errors.New("mg blew up")
 		}
 		var errOut bytes.Buffer
 		err := runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{}, io.Discard, &errOut)
@@ -102,6 +105,22 @@ func TestRunApply(t *testing.T) {
 		assert.Contains(t, err.Error(), "mg blew up")
 		assert.Contains(t, errOut.String(), "dry-run: 1 repo")
 		assert.Contains(t, errOut.String(), "  acme/a   error: Clone failed")
+	})
+
+	t.Run("unrecognised output reports unparseable, not a confident per-repo block", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir())
+		// multi-gitter's block drifts to headers goldfinger doesn't recognise.
+		run := func(_ context.Context, _ string, _, _ []string) ([]byte, error) {
+			return []byte("Changed repositories:\n  acme/a\n"), nil
+		}
+		var errOut bytes.Buffer
+		require.NoError(t, runApply(context.Background(), run, sel, spec, "tok", applyOutputOptions{}, io.Discard, &errOut))
+		s := errOut.String()
+		assert.Contains(t, s, "could not parse multi-gitter's result sections")
+		assert.NotContains(t, s, "would change", "an unparseable digest must not print a confident summary")
+		assert.NotContains(t, s, "  acme/a   error", "an unparseable digest must not relabel repos as errored")
+		// The full output is still surfaced so the operator can inspect the drift.
+		assert.Contains(t, s, "full run output:")
 	})
 }
 
