@@ -16,34 +16,107 @@ import (
 // nameExt is the file extension for named selections in the registry.
 const nameExt = ".json"
 
-// Write serialises s to path as indented JSON. The write is atomic: it writes a
-// sibling temp file and renames it into place, so a reader never sees a
-// half-written lockfile. The parent directory is created if needed.
-func Write(path string, s models.Selection) error {
+// WriteOptions tunes how Write publishes the lockfile.
+type WriteOptions struct {
+	// Overwrite replaces an existing lockfile at path (the refresh semantics of
+	// `select`). When false, Write refuses to clobber an existing file: it
+	// publishes with an atomic create-or-fail link, so two concurrent writers to
+	// the same path yield exactly one success and the loser gets an error that
+	// unwraps to fs.ErrExist. MCP handlers run concurrently, so this is the
+	// difference between a race and a guarantee.
+	Overwrite bool
+}
+
+// Write serialises s to path as indented JSON, published atomically so a reader
+// never sees a half-written lockfile. It writes to a uniquely-named temp file in
+// the *target directory* (a same-filesystem rename/link is an atomic metadata
+// op; a cross-device one would fail), fsyncs the file bytes and the parent
+// directory so the entry survives a crash, then either renames over any existing
+// file (opts.Overwrite) or hard-links create-or-fail (see WriteOptions). The
+// parent directory is created if needed. The temp file never lingers: every
+// return path removes it (a successful rename consumes it).
+func Write(path string, s models.Selection, opts WriteOptions) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal selection: %w", err)
 	}
 	data = append(data, '\n')
 
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
+	dir := filepath.Dir(path)
+	if dir == "" {
+		dir = "."
+	}
+	if dir != "." {
 		// 0750 applies only when MkdirAll creates the dir; a pre-existing
 		// selections dir keeps its mode. We deliberately don't chmod it back —
 		// the operator owns that directory and its metadata isn't secret; the
-		// lockfile itself is written 0600 below via the temp+rename.
+		// lockfile itself is written 0600 (os.CreateTemp's mode) below.
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create selection dir: %w", err)
 		}
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// A random suffix means concurrent writers never collide on the temp path
+	// itself — only on the final rename/link, which is where we want the race
+	// resolved. os.CreateTemp creates the file 0600.
+	tmp, err := os.CreateTemp(dir, ".selection-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp selection: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	if err := writeAndSync(tmp, data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close selection: %w", err)
+	}
+
+	if opts.Overwrite {
+		if err := os.Rename(tmpName, path); err != nil {
+			_ = os.Remove(tmpName)
+			return fmt.Errorf("finalise selection: %w", err)
+		}
+	} else {
+		// Link fails with EEXIST if path already exists — a race-free
+		// create-or-fail. The wrapped error still unwraps to fs.ErrExist.
+		if err := os.Link(tmpName, path); err != nil {
+			_ = os.Remove(tmpName)
+			return fmt.Errorf("create selection %s: %w", path, err)
+		}
+		_ = os.Remove(tmpName)
+	}
+
+	syncDir(dir)
+	return nil
+}
+
+// writeAndSync fills the temp file and fsyncs its bytes so they survive a crash
+// before the rename/link below publishes the directory entry.
+func writeAndSync(f *os.File, data []byte) error {
+	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("write selection: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("finalise selection: %w", err)
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync selection: %w", err)
 	}
 	return nil
+}
+
+// syncDir fsyncs a directory so a freshly-created or renamed entry within it
+// survives a crash. Best-effort: some filesystems reject opening a directory for
+// sync, and the file's own bytes are already fsynced, so a failure here is not
+// fatal to the write's durability contract.
+func syncDir(dir string) {
+	d, err := os.Open(dir) //nolint:gosec // G304: dir is the selection's own parent directory, resolved and created above.
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 // Read loads and validates the selection lockfile at path.

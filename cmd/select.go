@@ -168,7 +168,8 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 		Repos:           selected,
 		BranchesChecked: branches,
 	}
-	if err := selection.Write(o.selectionPath, sel); err != nil {
+	// select refreshes an existing lockfile in place, so overwrite is the intent.
+	if err := selection.Write(o.selectionPath, sel, selection.WriteOptions{Overwrite: true}); err != nil {
 		return err
 	}
 

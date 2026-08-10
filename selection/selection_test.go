@@ -1,8 +1,10 @@
 package selection
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,11 +33,72 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "goldfinger.selection")
 	want := sampleSelection()
 
-	require.NoError(t, Write(path, want))
+	require.NoError(t, Write(path, want, WriteOptions{Overwrite: true}))
 
 	got, err := Read(path)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
+}
+
+func TestWriteNoOverwriteRefusesExisting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	first := sampleSelection()
+	require.NoError(t, Write(path, first, WriteOptions{Overwrite: false}))
+
+	// A second create-or-fail write must refuse rather than clobber, and the
+	// error must unwrap to fs.ErrExist so callers can detect the collision.
+	second := sampleSelection()
+	second.Owner = "someone-else"
+	err := Write(path, second, WriteOptions{Overwrite: false})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrExist)
+
+	// The original bytes are untouched — the loser never wrote over the winner.
+	got, err := Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, first.Owner, got.Owner)
+
+	// No temp files linger in the directory after a refused write.
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".tmp", "temp file must not linger")
+	}
+}
+
+func TestWriteConcurrentCreateOrFailExactlyOneWins(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	const writers = 8
+	var wg sync.WaitGroup
+	results := make([]error, writers)
+	start := make(chan struct{})
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sel := sampleSelection()
+			sel.Owner = fmt.Sprintf("writer-%d", i)
+			<-start // line them all up so the link race is real
+			results[i] = Write(path, sel, WriteOptions{Overwrite: false})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	wins := 0
+	for _, err := range results {
+		if err == nil {
+			wins++
+		} else {
+			assert.ErrorIs(t, err, os.ErrExist)
+		}
+	}
+	assert.Equal(t, 1, wins, "exactly one concurrent create-or-fail writer succeeds")
+
+	// The file is one intact writer's lockfile, never a torn blend of several.
+	got, err := Read(path)
+	require.NoError(t, err)
+	assert.Regexp(t, `^writer-\d$`, got.Owner)
 }
 
 func TestReadMissingFile(t *testing.T) {
@@ -97,7 +160,7 @@ func TestNamedSelectionRegistry(t *testing.T) {
 		require.NoError(t, err)
 		sel := sampleSelection()
 		sel.Owner = n
-		require.NoError(t, Write(p, sel)) // Write creates the registry dir
+		require.NoError(t, Write(p, sel, WriteOptions{Overwrite: true})) // Write creates the registry dir
 	}
 
 	names, err = Names()

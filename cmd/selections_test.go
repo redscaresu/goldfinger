@@ -31,7 +31,7 @@ func TestSelectionsCommand(t *testing.T) {
 		Owner:      "acme",
 		ResolvedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 		Repos:      []models.Repo{{Owner: "acme", Name: "a"}, {Owner: "acme", Name: "b"}},
-	}))
+	}, selection.WriteOptions{Overwrite: true}))
 
 	t.Run("lists the selection with a summary", func(t *testing.T) {
 		out, err := executeCmd(t, "", "selections")
@@ -65,7 +65,7 @@ func TestSelectionsJSON(t *testing.T) {
 			Owner:      "acme",
 			ResolvedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 			Repos:      []models.Repo{{Owner: "acme", Name: "a"}, {Owner: "acme", Name: "b"}},
-		}))
+		}, selection.WriteOptions{Overwrite: true}))
 		// A malformed entry must be represented inline with an error, not dropped.
 		dir, err := selection.Dir()
 		require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestRunSelectionsQuiet(t *testing.T) {
 		Owner:      "acme",
 		ResolvedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 		Repos:      []models.Repo{{Owner: "acme", Name: "a"}},
-	}))
+	}, selection.WriteOptions{Overwrite: true}))
 	names := []string{"platform"}
 
 	t.Run("non-json emits nothing", func(t *testing.T) {
