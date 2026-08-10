@@ -121,13 +121,34 @@ func syncDir(dir string) {
 
 // Read loads and validates the selection lockfile at path.
 func Read(path string) (models.Selection, error) {
+	sel, _, err := ReadWithDigest(path)
+	return sel, err
+}
+
+// ReadWithDigest loads and validates the lockfile at path and also returns the
+// SelectionBytesDigest of the exact bytes it read — computed over the SAME
+// buffer it parses, so the digest provably identifies the content that produced
+// the returned selection. There is no re-read a concurrent writer could slip
+// between, which is what makes `apply --expect-selection-sha256` a real binding
+// and not a best-effort guess.
+func ReadWithDigest(path string) (models.Selection, string, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path is the selection lockfile location goldfinger resolves (a named selection under its config dir or an explicit --selection path); reading the operator's own lockfile is the point.
 	if err != nil {
 		if os.IsNotExist(err) {
-			return models.Selection{}, fmt.Errorf("no selection at %s — run `goldfinger select` first", path)
+			return models.Selection{}, "", fmt.Errorf("no selection at %s — run `goldfinger select` first", path)
 		}
-		return models.Selection{}, fmt.Errorf("read selection: %w", err)
+		return models.Selection{}, "", fmt.Errorf("read selection: %w", err)
 	}
+	sel, err := parseSelection(data, path)
+	if err != nil {
+		return models.Selection{}, "", err
+	}
+	return sel, SelectionBytesDigest(data), nil
+}
+
+// parseSelection unmarshals and version-validates lockfile bytes. It is shared
+// by Read and ReadWithDigest so the accepted-version rule lives in one place.
+func parseSelection(data []byte, path string) (models.Selection, error) {
 	var s models.Selection
 	if err := json.Unmarshal(data, &s); err != nil {
 		return models.Selection{}, fmt.Errorf("parse selection %s: %w", path, err)

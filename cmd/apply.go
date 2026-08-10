@@ -33,6 +33,7 @@ func newApplyCmd() *cobra.Command {
 		batchSize     int
 		batchPause    time.Duration
 		planJSON      bool
+		expectSHA     string
 	)
 	cmd := &cobra.Command{
 		Use:   "apply [flags] -- command [args...]",
@@ -53,6 +54,10 @@ func newApplyCmd() *cobra.Command {
 			}); err != nil {
 				return err
 			}
+			expectDigest, err := validateExpectSelectionDigest(expectSHA)
+			if err != nil {
+				return err
+			}
 			// A long PR body is easier to supply from a file than a shell-quoted
 			// flag; --pr-body-file loads it. The two body sources are mutually
 			// exclusive so there's no ambiguity about which one wins.
@@ -70,9 +75,16 @@ func newApplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sel, err := selection.Read(path)
+			sel, gotDigest, err := selection.ReadWithDigest(path)
 			if err != nil {
 				return err
+			}
+			// Bind the run to the exact lockfile a plan was reviewed against. This
+			// refusal fires before any token/tool resolution or network call, so a
+			// drifted selection costs nothing and — critically for an MCP caller —
+			// the human-reviewed digest is what actually gates the PRs.
+			if expectDigest != "" && gotDigest != expectDigest {
+				return fmt.Errorf("selection digest mismatch: --expect-selection-sha256 %s but %s hashes to %s — the lockfile changed since the plan was made; re-review and re-run", expectDigest, path, gotDigest)
 			}
 			// Only now resolve auth — after every pure/local guard (flag combos,
 			// PR-body, confirm, selection read) has passed. resolveToken is placed
@@ -129,6 +141,7 @@ func newApplyCmd() *cobra.Command {
 	f.BoolVar(&confirm, "confirm", false, "required alongside --dry-run=false to actually open PRs")
 	f.IntVar(&batchSize, "batch-size", 0, "open PRs in batches of this many repos to stay under GitHub rate limits (0 = one run over the whole selection)")
 	f.DurationVar(&batchPause, "batch-pause", 0, "pause between batches, e.g. 60s (only used with --batch-size)")
+	f.StringVar(&expectSHA, "expect-selection-sha256", "", "refuse to run unless the selection lockfile's sha256 (over its exact bytes) matches this 64-char hex digest — binds an apply to the precise selection a plan was reviewed against (empty = no check)")
 	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run status digest (on stderr; suppressed under --quiet, where the plan owns stdout)")
 	return cmd
 }

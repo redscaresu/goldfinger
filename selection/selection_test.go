@@ -101,6 +101,28 @@ func TestWriteConcurrentCreateOrFailExactlyOneWins(t *testing.T) {
 	assert.Regexp(t, `^writer-\d$`, got.Owner)
 }
 
+func TestReadWithDigestHashesExactBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	require.NoError(t, Write(path, sampleSelection(), WriteOptions{Overwrite: true}))
+
+	sel, digest, err := ReadWithDigest(path)
+	require.NoError(t, err)
+	assert.Equal(t, sampleSelection(), sel)
+
+	// The returned digest is sha256 over the file's exact on-disk bytes.
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, SelectionBytesDigest(raw), digest)
+	assert.Len(t, digest, 64, "full sha256 hex, not the short repo-set fingerprint")
+
+	// A one-byte change to the file changes the digest — that's what binds an
+	// apply to the reviewed content.
+	require.NoError(t, os.WriteFile(path, append(raw, ' '), 0o600))
+	_, digest2, err := ReadWithDigest(path)
+	require.NoError(t, err)
+	assert.NotEqual(t, digest, digest2)
+}
+
 func TestReadMissingFile(t *testing.T) {
 	_, err := Read(filepath.Join(t.TempDir(), "nope.selection"))
 	require.Error(t, err)

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/redscaresu/goldfinger/models"
+	"github.com/redscaresu/goldfinger/selection"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -396,5 +397,37 @@ func TestApplyCmdGuards(t *testing.T) {
 			"--pr-title", "t", "--sign", "none", "--dry-run=false", "--", "true")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--confirm")
+	})
+
+	t.Run("malformed expected digest is refused", func(t *testing.T) {
+		_, err := executeCmd(t, "tok", "apply", "--branch", "b", "--commit-message", "m",
+			"--pr-title", "t", "--sign", "none", "--expect-selection-sha256", "not-hex", "--", "true")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expect-selection-sha256")
+	})
+
+	t.Run("digest mismatch is refused before auth", func(t *testing.T) {
+		sel := writeSelection(t)
+		// A well-formed but wrong digest must refuse — and because the guard runs
+		// before auth, an empty token still surfaces the mismatch, not missing-PAT.
+		_, err := executeCmd(t, "", "apply", "--branch", "b", "--commit-message", "m",
+			"--pr-title", "t", "--sign", "none", "--selection", sel,
+			"--expect-selection-sha256", strings.Repeat("a", 64), "--", "true")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "digest mismatch")
+		assert.NotContains(t, err.Error(), tokenEnvVar, "the digest guard fires before token resolution")
+	})
+
+	t.Run("matching digest passes the guard", func(t *testing.T) {
+		sel := writeSelection(t)
+		_, digest, err := selection.ReadWithDigest(sel)
+		require.NoError(t, err)
+		// The correct digest is accepted, so the run proceeds to auth and stops
+		// there on the empty token — proving the guard let it through.
+		_, err = executeCmd(t, "", "apply", "--branch", "b", "--commit-message", "m",
+			"--pr-title", "t", "--sign", "none", "--selection", sel,
+			"--expect-selection-sha256", digest, "--", "true")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), tokenEnvVar, "past the digest guard, blocked only by missing token")
 	})
 }
