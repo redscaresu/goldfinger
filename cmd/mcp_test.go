@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,6 +76,30 @@ func TestMCPApplyPlanToolIsMarkedReadOnly(t *testing.T) {
 	assert.False(t, *found.Annotations.OpenWorldHint, "apply_plan is offline — a closed world")
 }
 
+// TestMCPWriteToolsAreMarkedDestructive asserts the local-side-effect tools do
+// not understate their behaviour: select overwrites the lockfile and mirror can
+// discard local changes (ghorg clean), so a host must not treat them as read-only
+// or safely-idempotent and silently auto-run them.
+func TestMCPWriteToolsAreMarkedDestructive(t *testing.T) {
+	cs := connectMCPTestClient(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+
+	byName := map[string]*mcp.Tool{}
+	for _, tool := range res.Tools {
+		byName[tool.Name] = tool
+	}
+	for _, name := range []string{"select", "mirror"} {
+		tool := byName[name]
+		require.NotNilf(t, tool, "%s tool must be present", name)
+		require.NotNilf(t, tool.Annotations, "%s must carry annotations", name)
+		assert.Falsef(t, tool.Annotations.ReadOnlyHint, "%s must not claim read-only", name)
+		require.NotNilf(t, tool.Annotations.DestructiveHint, "%s must state a destructive hint", name)
+		assert.Truef(t, *tool.Annotations.DestructiveHint, "%s must be marked destructive", name)
+		assert.Falsef(t, tool.Annotations.IdempotentHint, "%s must not claim idempotent", name)
+	}
+}
+
 // writeTestSelection writes a minimal two-repo lockfile and returns its path plus
 // the exact-bytes digest apply_plan is expected to bind the command to.
 func writeTestSelection(t *testing.T) (path, digest string) {
@@ -133,6 +158,15 @@ func TestMCPApplyPlanReturnsDigestBoundCommandsWithoutRunningApply(t *testing.T)
 
 	assert.Equal(t, digest, out.SelectionSHA256, "the plan must bind the exact-bytes digest")
 	assert.True(t, filepath.IsAbs(out.SelectionPath), "the command must pin an absolute selection path")
+
+	// The argv is runnable verbatim: program first, then the apply subcommand, and
+	// the display line is the same command (not double-prefixed).
+	require.GreaterOrEqual(t, len(out.DryRunCommand.Argv), 2)
+	assert.Equal(t, "goldfinger", out.DryRunCommand.Argv[0], "argv[0] must be the program, so the argv runs verbatim")
+	assert.Equal(t, "apply", out.DryRunCommand.Argv[1])
+	assert.Equal(t, "goldfinger", out.LiveCommand.Argv[0])
+	assert.True(t, strings.HasPrefix(out.DryRunCommand.Display, "goldfinger apply "),
+		"display must match the argv, not double-prefix the program: %q", out.DryRunCommand.Display)
 
 	// Both commands pin the exact lockfile; only the live one opens PRs.
 	assert.Contains(t, out.DryRunCommand.Argv, "--expect-selection-sha256")

@@ -21,7 +21,7 @@ func TestMCPRunCapturesBothStreamsNeverStdio(t *testing.T) {
 	// the returned buffer and route neither to the process's real stdout/stderr
 	// (which, in the server, are the JSON-RPC channel). c.Stdout/c.Stderr are set
 	// to the bounded buffer, so capturing both here proves nothing reached stdio.
-	out, err := mcpRun(context.Background(), "sh", []string{"-c", "echo to-stdout; echo to-stderr 1>&2"}, nil)
+	out, err := mcpRun(context.Background(), "sh", []string{"-c", "echo to-stdout; echo to-stderr 1>&2"}, nil, "")
 	require.NoError(t, err)
 	s := string(out)
 	assert.Contains(t, s, "to-stdout")
@@ -35,7 +35,7 @@ func TestMCPRunStdinIsNilNotServerStdin(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		out, err := mcpRun(context.Background(), "sh", []string{"-c", "cat; echo done"}, nil)
+		out, err := mcpRun(context.Background(), "sh", []string{"-c", "cat; echo done"}, nil, "")
 		assert.NoError(t, err)
 		assert.Contains(t, string(out), "done")
 	}()
@@ -56,6 +56,24 @@ func TestBoundedBufferKeepsTailAndFlagsTruncation(t *testing.T) {
 	_, _ = b2.Write([]byte("hi"))
 	assert.Equal(t, "hi", string(b2.Bytes()))
 	assert.False(t, b2.truncated)
+}
+
+func TestBoundedBufferRedactsTokenAcrossTruncationBoundary(t *testing.T) {
+	// The boundary case: a token lands where "keep the last N bytes" would slice
+	// through it. Redacting only after truncation would leave an unmaskable
+	// fragment (its front half dropped); redacting inside the buffer, before the
+	// drop, masks it while still whole. Assert the full token never survives no
+	// matter how later writes push it toward the drop boundary.
+	const token = "SUPERSECRETTOKEN"
+	b := &boundedBuffer{limit: 16, redact: func(p []byte) []byte { return redactToken(p, token) }}
+	_, _ = b.Write([]byte("xxxxxxxxxxxx")) // 12 bytes, under the limit
+	_, _ = b.Write([]byte(token))          // token completes here, overflowing the buffer
+	_, _ = b.Write([]byte("yyyyyyyyyyyy")) // push it across the drop boundary
+
+	got := string(b.Bytes())
+	assert.NotContains(t, got, token, "the full token must never survive truncation")
+	assert.NotContains(t, got, "SECRET", "no live fragment of the token may survive")
+	assert.True(t, b.truncated)
 }
 
 func TestRedactToken(t *testing.T) {
@@ -88,7 +106,7 @@ func TestMCPRunKillsProcessGroupOnCancel(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = mcpRun(ctx, "sh", []string{"-c", script}, nil)
+		_, _ = mcpRun(ctx, "sh", []string{"-c", script}, nil, "")
 	}()
 
 	pid := waitForPID(t, pidFile)

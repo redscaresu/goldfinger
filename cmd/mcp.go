@@ -147,11 +147,14 @@ func readOnlyRemote(title string) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptrBool(true), Title: title}
 }
 
-// writeLocalRemote marks a tool with local, non-destructive side-effects (writing
-// a lockfile, cloning) that also reaches GitHub. It is not read-only, but it is
-// non-destructive and idempotent (re-running re-resolves / re-syncs).
+// writeLocalRemote marks a tool with local side-effects that also reaches GitHub
+// (read-only, on the GitHub side): select and mirror. It is neither read-only nor
+// safely re-runnable-without-effect — select overwrites the lockfile, and mirror
+// runs ghorg with cleaning on by default, which can discard local changes in an
+// existing clone. So it is marked destructive and non-idempotent, and a host must
+// not silently auto-run it: an operator/human should confirm.
 func writeLocalRemote(title string) *mcp.ToolAnnotations {
-	return &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: ptrBool(false), IdempotentHint: true, OpenWorldHint: ptrBool(true), Title: title}
+	return &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: ptrBool(true), IdempotentHint: false, OpenWorldHint: ptrBool(true), Title: title}
 }
 
 // --- shared input fields ---------------------------------------------------
@@ -335,6 +338,12 @@ func mcpMirrorHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpMirrorI
 	if len(sel.Repos) == 0 {
 		return nil, mcpMirrorResult{}, fmt.Errorf("selection is empty — nothing to mirror; re-run select (a 0-repo select is an error unless allow_empty)")
 	}
+	// Caveat: a --purpose workspace is stamped to the millisecond (resolveWorkspace),
+	// so two concurrent mirror calls with the same purpose+branch resolving in the
+	// same millisecond would target one dir and interleave. That window is ~1 ms and
+	// needs two identical-purpose mirrors at once (an operator mistake, not routine
+	// automation); the fix would change the shared workspace-naming contract, so it
+	// is out of scope here. Use distinct --purpose names for concurrent mirrors.
 	ws, snap, err := resolveWorkspace(in.Workspace, in.Purpose, in.Branch)
 	if err != nil {
 		return nil, mcpMirrorResult{}, err
@@ -425,8 +434,10 @@ type mcpApplyPlanIn struct {
 }
 
 // mcpCommand is a runnable command in both machine (argv) and human (display)
-// form. The argv is exact — including the operator's own script after "--" — so
-// a human can run it verbatim; display is a shell-quoted rendering for reading.
+// form. argv is the exact, full command — argv[0] is "goldfinger", then its args,
+// including the operator's own script after "--" — so a client can exec it
+// verbatim. display is the same command shell-quoted for a human to read/paste;
+// the two never diverge.
 type mcpCommand struct {
 	Argv    []string `json:"argv"`
 	Display string   `json:"display"`
@@ -510,14 +521,16 @@ func mcpApplyPlanHandler(_ context.Context, _ *mcp.CallToolRequest, in mcpApplyP
 	}, nil
 }
 
-// buildApplyArgv assembles the exact `goldfinger apply ...` argv for a plan. The
-// selection is pinned by absolute --selection and --expect-selection-sha256, so
-// the command a human runs is provably the one the plan describes. live adds the
-// real-run guards (--dry-run=false --confirm); without them the command is a
-// dry-run (apply's default). The operator's script goes last after "--", exactly
-// as supplied.
+// buildApplyArgv assembles the exact, runnable `goldfinger apply ...` argv for a
+// plan — argv[0] is the program itself, so a client can exec the argv verbatim
+// (it is not args-to-goldfinger). The selection is pinned by absolute --selection
+// and --expect-selection-sha256, so the command a human runs is provably the one
+// the plan describes. live adds the real-run guards (--dry-run=false --confirm);
+// without them the command is a dry-run (apply's default). The operator's script
+// goes last after "--", exactly as supplied.
 func buildApplyArgv(spec models.ApplySpec, selectionPath, digest string, live bool) []string {
 	argv := []string{
+		"goldfinger",
 		"apply",
 		"--selection", selectionPath,
 		"--expect-selection-sha256", digest,
@@ -555,11 +568,11 @@ func buildApplyArgv(spec models.ApplySpec, selectionPath, digest string, live bo
 	return argv
 }
 
-// mcpDisplay renders an argv as a copy-pasteable shell command line, quoting only
-// the tokens that need it. It is a human aid; Argv is the exact source of truth.
+// mcpDisplay renders a full argv (program first) as a copy-pasteable shell
+// command line, quoting only the tokens that need it. It is a human aid; Argv is
+// the exact source of truth and the two stay in lockstep — both are runnable.
 func mcpDisplay(argv []string) string {
-	parts := make([]string, 0, len(argv)+1)
-	parts = append(parts, "goldfinger")
+	parts := make([]string, 0, len(argv))
 	for _, a := range argv {
 		parts = append(parts, shellQuote(a))
 	}
