@@ -551,7 +551,7 @@ goldfinger workspaces list --json    # {version, root, action, workspaces:[…]}
 goldfinger workspaces prune                    # PREVIEW — shows what it would
                                                # remove, deletes nothing
 goldfinger workspaces prune --confirm          # actually delete
-goldfinger workspaces prune --older-than 168h  # only snapshots older than 7d
+goldfinger workspaces prune --older-than 7d    # only snapshots older than 7d
 goldfinger workspaces prune --purpose keyv-cve # only that recorded purpose
 ```
 
@@ -571,7 +571,8 @@ confirm-gated). Both filters are deliberately conservative:
 
 - `--purpose` matches **only** manifest-tagged snapshots whose recorded purpose
   is *exactly* that name — a manifest-less snapshot is never matched by purpose.
-- `--older-than` skips any snapshot whose age can't be determined, so an
+- `--older-than` accepts day/week sugar (`7d`, `2w`) as well as any Go duration
+  (`168h`, `90m`), and skips any snapshot whose age can't be determined, so an
   ambiguous snapshot is kept, not deleted.
 
 `prune` will only ever delete a stamp-suffixed directory that is a direct child

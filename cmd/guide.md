@@ -241,11 +241,13 @@ WORKSPACE LIFECYCLE (workspaces list | prune)
        goldfinger workspaces prune                      # PREVIEW: shows what it
                                                         # would remove, deletes 0
        goldfinger workspaces prune --confirm            # actually delete
-       goldfinger workspaces prune --older-than 168h    # only snapshots >7d old
+       goldfinger workspaces prune --older-than 7d      # only snapshots >7d old
        goldfinger workspaces prune --purpose keyv-cve   # only that purpose
   prune mirrors apply's posture: it PREVIEWS by default and deletes only with
   --confirm — it never removes a snapshot on its own. Narrow with --older-than
-  <dur> and/or --purpose <name>; with no filter it targets every snapshot (still
+  <dur> and/or --purpose <name>; --older-than takes day/week sugar (7d, 2w) as
+  well as any Go duration (168h, 90m). With no filter it targets every snapshot
+  (still
   confirm-gated). Both filters are conservative: --purpose matches only
   manifest-tagged snapshots whose recorded purpose is EXACTLY that name (a
   manifest-less snapshot is never matched by purpose), and --older-than skips any

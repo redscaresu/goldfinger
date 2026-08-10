@@ -237,6 +237,94 @@ func TestPruneOlderThanFiltersByAge(t *testing.T) {
 	assert.DirExists(t, fresh, "a snapshot within 7d is kept")
 }
 
+func TestPruneOlderThanAcceptsDayWeekSugar(t *testing.T) {
+	// "7d" must behave exactly like "168h": the 9-day-old snapshot goes, the
+	// 1-day-old one stays. This locks the day/week sugar to the same filter path
+	// as a Go duration.
+	root := t.TempDir()
+	now := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+	orig := nowFunc
+	nowFunc = func() time.Time { return now }
+	defer func() { nowFunc = orig }()
+
+	old := makeSnapshot(t, root, "audit-2026-08-01-000000.000", "audit", "", now.Add(-9*24*time.Hour), 100)
+	fresh := makeSnapshot(t, root, "audit-2026-08-09-000000.000", "audit", "", now.Add(-24*time.Hour), 100)
+
+	_, err := executeCmd(t, "tok", "workspaces", "prune", "--root", root, "--older-than", "7d", "--confirm")
+	require.NoError(t, err)
+
+	assert.NoDirExists(t, old, "a snapshot older than 7d is pruned via the day-sugar form")
+	assert.DirExists(t, fresh, "a snapshot within 7d is kept")
+}
+
+func TestParseAgeDuration(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{in: "7d", want: 168 * time.Hour},
+		{in: "1d", want: 24 * time.Hour},
+		{in: "2w", want: 336 * time.Hour},
+		{in: "168h", want: 168 * time.Hour},
+		{in: "90m", want: 90 * time.Minute},
+		{in: "1h30m", want: 90 * time.Minute},
+		{in: "0", want: 0},
+		{in: "-7d", want: -168 * time.Hour}, // parses; runWorkspaces rejects the sign
+		{in: "", wantErr: true},
+		{in: "7dd", wantErr: true},
+		{in: "1w3d", wantErr: true}, // no compounding of the sugar units
+		{in: "7days", wantErr: true},
+		{in: "d", wantErr: true},
+		{in: "abc", wantErr: true},
+		// Overflow guard: n*unit must not wrap int64 nanoseconds. 106752 days and
+		// 15251 weeks are each one step past the largest value that fits, and a huge
+		// negative would wrap toward 0 and slip past the negative-age reject.
+		{in: "106752d", wantErr: true},
+		{in: "15251w", wantErr: true},
+		{in: "-106752d", wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			got, err := parseAgeDuration(c.in)
+			if c.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
+	}
+}
+
+func TestPruneRejectsNegativeDaySugar(t *testing.T) {
+	// "-7d" must reach the same negative-age rejection as "-1h", not fall through
+	// to time.ParseDuration's opaque "unknown unit d" error.
+	root := t.TempDir()
+	created := time.Date(2026, 8, 5, 10, 11, 12, 131000000, time.UTC)
+	dir := makeSnapshot(t, root, "audit-2026-08-05-101112.131", "audit", "", created, 100)
+
+	_, err := executeCmd(t, "tok", "workspaces", "prune", "--root", root, "--older-than", "-7d", "--confirm")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "negative")
+	assert.DirExists(t, dir, "a rejected filter must not delete anything")
+}
+
+func TestPruneRejectsOverflowingDaySugar(t *testing.T) {
+	// Regression: a day/week count large enough to overflow int64 nanoseconds used
+	// to wrap silently — 213504d wrapped to ~25m, slipping past the non-negative
+	// guard so `prune --confirm` would match (and delete) almost every snapshot.
+	// The out-of-range age must be rejected at flag-parse time, deleting nothing.
+	root := t.TempDir()
+	created := time.Date(2026, 8, 5, 10, 11, 12, 131000000, time.UTC)
+	dir := makeSnapshot(t, root, "audit-2026-08-05-101112.131", "audit", "", created, 100)
+
+	_, err := executeCmd(t, "tok", "workspaces", "prune", "--root", root, "--older-than", "213504d", "--confirm")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "out of range")
+	assert.DirExists(t, dir, "an overflowing age must be rejected, never wrap into a delete-everything filter")
+}
+
 func TestPruneRejectsNegativeOlderThan(t *testing.T) {
 	root := t.TempDir()
 	created := time.Date(2026, 8, 5, 10, 11, 12, 131000000, time.UTC)
