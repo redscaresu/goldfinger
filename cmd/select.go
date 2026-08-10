@@ -130,48 +130,15 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 		return fmt.Errorf("verifying token: %w", err)
 	}
 	announcePrincipal(errOut, login)
-	repos, ownerType, err := r.ListRepos(ctx, t.org)
+	sel, err := buildSelectionFromLive(ctx, r, o, login, errOut)
 	if err != nil {
 		return err
-	}
-	selected := discovery.Select(repos, discovery.Filter{AllRepos: t.allRepos, Topics: t.topics})
-
-	// A zero-repo result is almost always a mistake (wrong token identity, wrong
-	// owner, or a topic that matches nothing) rather than an intended empty fleet.
-	// Failing here — instead of silently writing an empty lockfile that a later
-	// mirror/apply would treat as "nothing to do" — turns a silent no-op into a
-	// diagnosable error. --allow-empty is the escape hatch for the rare intended case.
-	if len(selected) == 0 && !o.allowEmpty {
-		return emptySelectionError(o.source, login, t)
-	}
-
-	// discovery.Select returns a nil slice for zero matches; with --allow-empty
-	// that would serialise as "repos": null. Normalise to an empty slice so the
-	// lockfile (and select --json) always carry a JSON array, which is what a
-	// machine consumer expects.
-	if selected == nil {
-		selected = []models.Repo{}
-	}
-
-	branches := dedupeNonEmpty(o.branchesToCheck)
-	if err := annotateBranchPresence(ctx, r, selected, branches, errOut); err != nil {
-		return err
-	}
-
-	sel := models.Selection{
-		Version:         models.SelectionVersion,
-		Owner:           t.org,
-		OwnerType:       ownerType,
-		Filter:          models.SelectionFilter{AllRepos: t.allRepos, Topics: t.topics},
-		ResolvedAt:      time.Now().UTC(),
-		Tool:            o.tool,
-		Repos:           selected,
-		BranchesChecked: branches,
 	}
 	// select refreshes an existing lockfile in place, so overwrite is the intent.
 	if err := selection.Write(o.selectionPath, sel, selection.WriteOptions{Overwrite: true}); err != nil {
 		return err
 	}
+	selected := sel.Repos
 
 	// Output shape, terse-by-default (issue #48 WS7): --json owns stdout with the
 	// full wrapper; --list explicitly echoes the repo names (the old default, now
@@ -199,6 +166,55 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 	// tests while adding the fingerprint an agent can note without re-reading.
 	done(errOut, fmt.Sprintf("%d repo(s) written to %s (digest %s)", len(selected), o.selectionPath, digest))
 	return nil
+}
+
+// buildSelectionFromLive resolves the owner's repos, applies the selection
+// filter, records any requested branch-presence facts, and assembles the
+// lockfile value — the output-free core shared by the CLI `select` command and
+// the MCP `select` tool. It does NOT write the file or emit anything; the caller
+// persists and reports. login (from the caller's own Verify) is used only to make
+// the empty-selection diagnostic name the identity in play. errOut receives the
+// branch-presence banner; MCP passes io.Discard.
+func buildSelectionFromLive(ctx context.Context, r branchResolver, o selectOpts, login string, errOut io.Writer) (models.Selection, error) {
+	t := o.t
+	repos, ownerType, err := r.ListRepos(ctx, t.org)
+	if err != nil {
+		return models.Selection{}, err
+	}
+	selected := discovery.Select(repos, discovery.Filter{AllRepos: t.allRepos, Topics: t.topics})
+
+	// A zero-repo result is almost always a mistake (wrong token identity, wrong
+	// owner, or a topic that matches nothing) rather than an intended empty fleet.
+	// Failing here — instead of silently writing an empty lockfile that a later
+	// mirror/apply would treat as "nothing to do" — turns a silent no-op into a
+	// diagnosable error. --allow-empty is the escape hatch for the rare intended case.
+	if len(selected) == 0 && !o.allowEmpty {
+		return models.Selection{}, emptySelectionError(o.source, login, t)
+	}
+
+	// discovery.Select returns a nil slice for zero matches; with --allow-empty
+	// that would serialise as "repos": null. Normalise to an empty slice so the
+	// lockfile (and select --json) always carry a JSON array, which is what a
+	// machine consumer expects.
+	if selected == nil {
+		selected = []models.Repo{}
+	}
+
+	branches := dedupeNonEmpty(o.branchesToCheck)
+	if err := annotateBranchPresence(ctx, r, selected, branches, errOut); err != nil {
+		return models.Selection{}, err
+	}
+
+	return models.Selection{
+		Version:         models.SelectionVersion,
+		Owner:           t.org,
+		OwnerType:       ownerType,
+		Filter:          models.SelectionFilter{AllRepos: t.allRepos, Topics: t.topics},
+		ResolvedAt:      time.Now().UTC(),
+		Tool:            o.tool,
+		Repos:           selected,
+		BranchesChecked: branches,
+	}, nil
 }
 
 // emptySelectionError builds a diagnostic for a zero-repo result that names the

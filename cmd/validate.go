@@ -85,7 +85,7 @@ func validateExpectSelectionDigest(v string) (string, error) {
 	}
 	lower := strings.ToLower(v)
 	for _, c := range lower {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return "", errors.New("--expect-selection-sha256 must be hexadecimal (0-9a-f)")
 		}
 	}

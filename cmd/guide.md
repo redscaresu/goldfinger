@@ -370,3 +370,9 @@ NOTES FOR AI AGENTS
     or an install hint for a missing tool). Follow it.
   - "the repos I mirror" and "the repos I apply to" are the same frozen set,
     from one lockfile — that is the guarantee goldfinger exists to provide.
+  - If your host speaks MCP, `goldfinger mcp` serves this same read-and-plan
+    surface as typed tools over stdio (guide, schema, selections, check, select,
+    mirror, workspaces_list, doctor, apply_plan) — call them instead of shelling
+    out and parsing text. There is deliberately no `apply` tool: `apply_plan`
+    returns the exact, digest-bound `goldfinger apply` command (dry-run and live
+    variants) for a human to run, because opening PRs stays a human action.
