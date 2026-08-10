@@ -220,6 +220,18 @@ func printDryRunDigest(w io.Writer, repos []models.Repo, output []byte, writeLog
 	if digest.RepoCount == 1 {
 		repoWord = "repo"
 	}
+
+	// Format drift (or an all-errors run): none of multi-gitter's known result
+	// sections were found, so the per-repo buckets can't be trusted. Say so
+	// plainly rather than print a confident digest that could relabel repos as
+	// errored — the full run output is the source of truth here.
+	if digest.Unparseable {
+		fmt.Fprintf(w, "dry-run: %d %s — could not parse multi-gitter's result sections; per-repo status unavailable "+
+			"(multi-gitter's output format may have changed, or every repo errored) — inspect the full run output\n",
+			digest.RepoCount, repoWord)
+		return emitFullRunLog(w, output, writeLog)
+	}
+
 	errorWord := "errors"
 	if digest.Errored == 1 {
 		errorWord = "error"
@@ -237,10 +249,14 @@ func printDryRunDigest(w io.Writer, repos []models.Repo, output []byte, writeLog
 		}
 		fmt.Fprintf(w, "  %s   %s\n", repo.Repo, repo.Status)
 	}
+	return emitFullRunLog(w, output, writeLog)
+}
 
-	// The full-output log is an operator drill-down aid on the human stream; a
-	// quiet machine run neither wants the file nor a path it cannot consume, so
-	// callers skip it there (and avoid a spurious exit-2 on an unwritable TMPDIR).
+// emitFullRunLog writes multi-gitter's full output to a 0600 temp file and prints
+// its path — the operator drill-down aid on the human stream. A quiet machine run
+// neither wants the file nor a path it cannot consume, so callers skip it there
+// (and avoid a spurious exit-2 on an unwritable TMPDIR).
+func emitFullRunLog(w io.Writer, output []byte, writeLog bool) error {
 	if !writeLog {
 		return nil
 	}

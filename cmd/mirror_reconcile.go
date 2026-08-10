@@ -36,7 +36,7 @@ func reconcile(sel models.Selection, ws string, opts mirror.Options) reconciliat
 	r := reconciliation{inSelection: len(sel.Repos), hasBranch: opts.Branch != ""}
 	ownerDir := filepath.Join(ws, sel.Owner)
 	for _, repo := range sel.Repos {
-		if isDir(filepath.Join(ownerDir, repo.Name)) {
+		if isGitClone(filepath.Join(ownerDir, repo.Name)) {
 			r.onDisk++
 		}
 		if !r.hasBranch {
@@ -116,6 +116,23 @@ func reportReconciliation(errOut io.Writer, rec reconciliation, ws, owner, logPa
 		return
 	}
 	done(errOut, "reconciliation: "+rec.line())
+}
+
+// isGitClone reports whether path is an actual git clone — a directory that
+// holds a .git entry — rather than a bare, leftover, or half-written directory.
+// reconcile counts a repo "on disk" only when this holds, so a stale directory
+// from an earlier interrupted mirror (or any unrelated dir a name happens to
+// match) can't be miscounted as covered on the one line marketed as the
+// authoritative coverage truth. It stays within the charter: a read-only stat,
+// never git. The .git entry is accepted whether it is a directory (a normal
+// ghorg clone) or a file (a gitfile-linked worktree), so "is this a clone" is
+// answered honestly without assuming ghorg's exact layout.
+func isGitClone(path string) bool {
+	if !isDir(path) {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(path, ".git"))
+	return err == nil
 }
 
 // isDir reports whether path exists and is a directory.

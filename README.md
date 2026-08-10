@@ -239,8 +239,10 @@ When ghorg finishes, goldfinger prints its own **reconciliation line** to stderr
 Read this instead of ghorg's `N new clones`, which counts only *newly* cloned
 repos — a re-mirror of an unchanged fleet reports `0 new clones` even though all
 59 are present. `in selection` is the lockfile count; `on disk` is a read-only
-count (a directory stat per repo, no `git`) of how many actually landed under
-`<workspace>/<owner>`. If `on disk` is short, goldfinger warns (⚠) that the
+count (a stat per repo, no `git`) of how many actually landed under
+`<workspace>/<owner>` **as real clones** — goldfinger requires a `.git` entry, so
+a leftover or half-written directory from an interrupted mirror isn't miscounted
+as covered. If `on disk` is short, goldfinger warns (⚠) that the
 mirror under-covered the selection so you can re-run rather than trust a green
 finish. With `--branch`, `branch present` / `fell back` (and `unknown`, when any)
 recast ghorg's per-repo `Could not checkout <branch>` noise as the expected
@@ -293,7 +295,8 @@ too):
 ```
 
 In `reconciliation`, `inSelection` is the lockfile count, `onDisk` is how many
-repos actually landed under `<workspace>/<owner>`, and `notOnDisk` is the
+repos actually landed under `<workspace>/<owner>` as real clones (a `.git` entry
+must be present, so a stale/partial directory doesn't count), and `notOnDisk` is the
 shortfall (repos that failed to land — a real coverage gap, distinct from a
 branch fall-back). The nested `branch` object appears only when `--branch` was
 requested (its `present`/`fellBack`/`unknown` tallies sum to `inSelection`); a
@@ -371,9 +374,12 @@ code moves between your inspection and the apply, the change runs against the
 newer code; run `--dry-run` first (it also clones fresh) rather than trusting the
 mirror snapshot. Non-interactive multi-gitter dry-run does **not** emit a unified
 diff; goldfinger prints the per-repo status it can honestly know
-(`would-change`, `no-change`, or `error`) plus a full-output file path. (`check`
-catches *selection* drift, not *content* drift inside a repo — dry-run is the
-apply-time signal.)
+(`would-change`, `no-change`, or `error`) plus a full-output file path. If
+multi-gitter's output doesn't match a format goldfinger recognises (a version
+drift, or a run where every repo errored), the digest reports that it *could not
+parse* the result and withholds per-repo verdicts rather than guessing — read the
+full-output file in that case. (`check` catches *selection* drift, not *content*
+drift inside a repo — dry-run is the apply-time signal.)
 
 - The command after `--` runs in each repo's checkout, **on your machine** — so
   it must be portable to your OS. `sed -i 's|…|…|g'` is a GNU-ism that fails on
@@ -475,7 +481,10 @@ prints the token:
   shadowing your `gh` login (the wrong-identity footgun — see
   [Requirements](#requirements)).
 - **ghorg** / **multi-gitter** — each child tool's PATH location and version, or
-  a fail with an install hint if it's missing.
+  a fail with an install hint if it's missing. multi-gitter's version is also
+  checked against goldfinger's known-good floor (currently `0.63.1`, the version
+  `apply`'s local-signing and dry-run parsing were verified against); an older or
+  unreadable version is an advisory **warn**, never a fail.
 - **git-identity** — `user.name`/`user.email` resolved by *parsing* the
   system + global + env git config directly (goldfinger never shells out to
   `git`). A warn if unset, because `apply` would then silently make no commit and
@@ -673,7 +682,9 @@ against it in either form.
 
 For apply dry-runs, consume goldfinger's per-repo status digest instead of
 scraping the fleet-wide child output. The digest names `would-change`,
-`no-change`, and `error` repos. In normal mode it prints to stderr with the full
+`no-change`, and `error` repos (or, if multi-gitter's output format is
+unrecognised, reports that it could not parse the result rather than emitting a
+confident-but-wrong per-repo block). In normal mode it prints to stderr with the full
 captured output file path; under `--quiet` it becomes the stdout machine result
 (and the temp file is skipped), so an agent still learns what would change
 without the human banners — unless `--plan-json` is set, which then owns stdout

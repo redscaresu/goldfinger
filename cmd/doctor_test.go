@@ -304,6 +304,60 @@ func TestGitIdentityResolvedDespiteUnresolvedElsewhere(t *testing.T) {
 	assert.Contains(t, c.Detail, "include", "an unresolved include must be disclosed even on a pass")
 }
 
+func TestRunDoctorWarnsOnOldMultiGitter(t *testing.T) {
+	// A multi-gitter below the known-good floor is an advisory warn, not a fail:
+	// apply's signing and dry-run parsing were verified against the floor, so an
+	// older one is a visible risk, but the tool may still work.
+	deps := okDeps()
+	deps.probeTool = func(_ context.Context, name string) (string, string, bool) {
+		if name == "multi-gitter" {
+			return "/usr/local/bin/multi-gitter", "multi-gitter version 0.60.0", true
+		}
+		return "/usr/local/bin/" + name, name + " v1.2.3", true
+	}
+	out, _, err := runDoctorCapture(t, deps, false)
+	require.NoError(t, err, "an old tool version must not fail the run")
+	assert.Contains(t, out, "[warn] multi-gitter")
+	assert.Contains(t, out, "known-good floor")
+}
+
+func TestRunDoctorWarnsWhenMultiGitterVersionUnreadable(t *testing.T) {
+	// A version string the probe can't parse must warn (can't verify the floor),
+	// not silently pass as if it were known-good.
+	deps := okDeps()
+	deps.probeTool = func(_ context.Context, name string) (string, string, bool) {
+		if name == "multi-gitter" {
+			return "/usr/local/bin/multi-gitter", "", true
+		}
+		return "/usr/local/bin/" + name, name + " v1.2.3", true
+	}
+	out, _, err := runDoctorCapture(t, deps, false)
+	require.NoError(t, err)
+	assert.Contains(t, out, "[warn] multi-gitter")
+	assert.Contains(t, out, "could not read a version")
+}
+
+func TestVersionFloorWarning(t *testing.T) {
+	cases := []struct {
+		version  string
+		wantWarn bool
+	}{
+		{"multi-gitter version 0.63.1", false}, // exactly the floor is OK
+		{"v0.63.2", false},
+		{"1.0.0", false},
+		{"v0.63.0", true}, // below floor
+		{"0.62.9", true},
+		{"garbage-no-version", true}, // unreadable
+		{"", true},
+	}
+	for _, c := range cases {
+		t.Run(c.version, func(t *testing.T) {
+			_, _, warn := versionFloorWarning(c.version, multiGitterKnownGoodFloor)
+			assert.Equal(t, c.wantWarn, warn)
+		})
+	}
+}
+
 func TestDoctorReportContainsAllChecks(t *testing.T) {
 	checks := gatherDoctorChecks(context.Background(), okDeps())
 	names := make([]string, 0, len(checks))
