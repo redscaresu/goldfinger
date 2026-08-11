@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -235,6 +236,132 @@ func TestMCPReadOnlyToolsRoundTrip(t *testing.T) {
 		require.NoErrorf(t, err, "%s call", name)
 		assert.Falsef(t, res.IsError, "%s must succeed offline: %v", name, res.Content)
 	}
+}
+
+// TestBuildApplyArgvIncludesEveryOptionalFlag locks the exact command apply_plan
+// hands a human: every optional field must map to its flag (in the documented
+// order), list fields must repeat one flag per value, and only a live run may carry
+// the real-run guard. This is the runnable contract, so it is worth pinning tightly.
+func TestBuildApplyArgvIncludesEveryOptionalFlag(t *testing.T) {
+	spec := models.ApplySpec{
+		Sign:          models.SignLocal,
+		Branch:        "bump-dep",
+		CommitMessage: "bump dep",
+		PRTitle:       "Bump dep",
+		BaseBranch:    "dev",
+		PRBody:        "body with spaces",
+		Labels:        []string{"dependencies", "automated"},
+		Reviewers:     []string{"octocat", "acme/platform"},
+		Draft:         true,
+		BatchSize:     5,
+		BatchPause:    30 * time.Second,
+		Script:        []string{"sed", "-i", "s/old/new/", "go.mod"},
+	}
+	argv := buildApplyArgv(spec, "/abs/platform.selection", "deadbeef", true)
+
+	assert.Equal(t, "dev", argValue(t, argv, "--base-branch"))
+	assert.Equal(t, "body with spaces", argValue(t, argv, "--pr-body"))
+	assert.Equal(t, []string{"dependencies", "automated"}, argValues(argv, "--label"),
+		"each label repeats the --label flag")
+	assert.Equal(t, []string{"octocat", "acme/platform"}, argValues(argv, "--reviewer"),
+		"each reviewer repeats the --reviewer flag")
+	assert.Contains(t, argv, "--draft")
+	assert.Equal(t, "5", argValue(t, argv, "--batch-size"))
+	assert.Equal(t, "30s", argValue(t, argv, "--batch-pause"), "duration is rendered, not the raw nanoseconds")
+	assert.Contains(t, argv, "--dry-run=false", "a live argv carries the real-run guard")
+	assert.Contains(t, argv, "--confirm")
+	assert.Equal(t, []string{"sed", "-i", "s/old/new/", "go.mod"}, scriptAfterSeparator(argv))
+
+	// Omitted optionals must not leak their flags, and a dry-run argv must not carry
+	// the real-run guard — the two postures differ only by that pair.
+	bare := buildApplyArgv(models.ApplySpec{
+		Sign: models.SignNone, Branch: "b", CommitMessage: "m", PRTitle: "t",
+		Script: []string{"true"},
+	}, "/abs/s.selection", "d", false)
+	for _, flag := range []string{"--base-branch", "--pr-body", "--label", "--reviewer", "--draft", "--batch-size", "--batch-pause", "--dry-run=false", "--confirm"} {
+		assert.NotContainsf(t, bare, flag, "a bare dry-run argv must not carry %s", flag)
+	}
+}
+
+// argValue returns the token following the first occurrence of flag, failing if the
+// flag is absent — so a typo in the flag name is caught, not silently passed.
+func argValue(t *testing.T, argv []string, flag string) string {
+	t.Helper()
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	t.Fatalf("flag %q not found in argv %v", flag, argv)
+	return ""
+}
+
+// argValues returns the token following every occurrence of flag, in order.
+func argValues(argv []string, flag string) []string {
+	var out []string
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) {
+			out = append(out, argv[i+1])
+		}
+	}
+	return out
+}
+
+// TestMCPWorkspacesListReflectsRootOnDisk proves the workspaces_list tool answers
+// over the protocol from the real on-disk snapshot root, returning a well-formed
+// list report — offline, no token.
+func TestMCPWorkspacesListReflectsRootOnDisk(t *testing.T) {
+	t.Setenv(tokenEnvVar, "")
+	stubGhToken(t, "", false)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	created := time.Date(2026, 8, 5, 10, 11, 12, 0, time.UTC)
+	makeSnapshot(t, filepath.Join(home, "goldfinger"), "audit-2026-08-05-101112.131", "audit", "", created, 2048)
+
+	cs := connectMCPTestClient(t)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "workspaces_list"})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "workspaces_list must succeed offline: %v", res.Content)
+
+	var out workspacesReport
+	decodeStructured(t, res, &out)
+	assert.Equal(t, workspaceActionList, out.Action, "the list tool must never report a prune action")
+	assert.False(t, out.Pruned)
+	require.Len(t, out.Workspaces, 1, "the one stamped snapshot on disk must be listed")
+	assert.Contains(t, out.Workspaces[0].Path, "audit-2026-08-05-101112.131")
+	assert.Equal(t, "audit", out.Workspaces[0].Purpose, "purpose is recovered from the sidecar manifest")
+}
+
+// TestMCPSelectionsReflectsRegistryOnDisk proves the selections tool enumerates the
+// named lockfiles in the registry dir and reports each one's repo count — offline.
+func TestMCPSelectionsReflectsRegistryOnDisk(t *testing.T) {
+	t.Setenv(tokenEnvVar, "")
+	stubGhToken(t, "", false)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	path, err := selection.PathForName("platform")
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, selection.Write(path, models.Selection{
+		Version:   models.SelectionVersion,
+		Owner:     "acme",
+		OwnerType: models.OwnerOrganization,
+		Tool:      "goldfinger test",
+		Repos:     []models.Repo{{Owner: "acme", Name: "alpha"}, {Owner: "acme", Name: "beta"}},
+	}, selection.WriteOptions{Overwrite: true}))
+
+	cs := connectMCPTestClient(t)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "selections"})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "selections must succeed offline: %v", res.Content)
+
+	var out selectionsReport
+	decodeStructured(t, res, &out)
+	require.Len(t, out.Selections, 1, "the one lockfile in the registry must be listed")
+	entry := out.Selections[0]
+	assert.Equal(t, "platform", entry.Name)
+	require.NotNil(t, entry.RepoCount, "a readable selection reports its repo count")
+	assert.Equal(t, 2, *entry.RepoCount)
 }
 
 // decodeStructured round-trips a tool result's structured content into v.
