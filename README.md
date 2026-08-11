@@ -862,6 +862,30 @@ that speaks MCP can call goldfinger as typed tools instead of shelling out and
 parsing text. Point your MCP client at the command `goldfinger mcp` (no args);
 stdin/stdout are the JSON-RPC channel, so don't pipe anything else into them.
 
+Register it with your client. Most hosts (Claude Desktop, Cursor, and others)
+take a `mcpServers` block in their config file — add goldfinger as a stdio
+server, and pass a GitHub token through `env` for the tools that reach GitHub
+(`doctor`, `check`, `select`, `mirror`); the offline tools need none:
+
+```json
+{
+  "mcpServers": {
+    "goldfinger": {
+      "command": "goldfinger",
+      "args": ["mcp"],
+      "env": { "GITHUB_TOKEN": "ghp_your_token_here" }
+    }
+  }
+}
+```
+
+Claude Code registers the same server from the CLI (it inherits your shell's
+`GITHUB_TOKEN`, so pass `--env` only to override it):
+
+```sh
+claude mcp add goldfinger goldfinger mcp
+```
+
 The tools mirror the CLI's machine surface one-for-one, and each returns the same
 structured payload the corresponding `--json` command emits:
 
