@@ -61,10 +61,56 @@ func runMCPServer(ctx context.Context) error {
 	return newMCPServer().Run(ctx, &mcp.StdioTransport{})
 }
 
-// newMCPServer constructs the server with every tool registered. It is separated
-// from Run so tests can inspect the registered tool set (and prove `apply` is not
-// among them) without opening a transport.
+// mcpDeps holds the environment-touching collaborators the network tools reach
+// through, so a test can drive check/mirror hermetically — no token, no GitHub,
+// no ghorg on PATH. defaultMCPDeps wires the real implementations; a test swaps
+// in fakes. Only the tools that leave the closed world take deps: the offline
+// catalogue/contract handlers stay bare funcs.
+type mcpDeps struct {
+	// resolveToken returns the token and its source (env var name / keychain).
+	resolveToken func(context.Context) (string, string, error)
+	// listRepos performs live discovery for a selection's owner, returning the
+	// raw repos and the owner's live type (user/org).
+	listRepos func(context.Context, string) ([]models.Repo, string, error)
+	// requireTool asserts a child CLI (e.g. ghorg) is on PATH.
+	requireTool func(name, installHint string) error
+	// verifyLogin resolves the GitHub principal a token authenticates as, failing
+	// fast on a bad token before a long clone.
+	verifyLogin func(context.Context, string) (string, error)
+	// delegate runs a child tool with output captured and token-redacted — never
+	// touching the server's real stdio.
+	delegate func(ctx context.Context, name string, args, env []string, token string) ([]byte, error)
+}
+
+// defaultMCPDeps wires the real collaborators used in production. The default
+// listRepos resolves a token and builds a client per call (mcpClient), matching
+// the standalone check command.
+func defaultMCPDeps() mcpDeps {
+	return mcpDeps{
+		resolveToken: resolveToken,
+		listRepos: func(ctx context.Context, owner string) ([]models.Repo, string, error) {
+			c, err := mcpClient(ctx)
+			if err != nil {
+				return nil, "", err
+			}
+			return c.ListRepos(ctx, owner)
+		},
+		requireTool: requireTool,
+		verifyLogin: verifyLoginWithClient,
+		delegate:    mcpDelegate,
+	}
+}
+
+// newMCPServer constructs the server with the production collaborators.
 func newMCPServer() *mcp.Server {
+	return newMCPServerWithDeps(defaultMCPDeps())
+}
+
+// newMCPServerWithDeps constructs the server with every tool registered, reaching
+// the environment through d. It is separated from Run so tests can inspect the
+// registered tool set (and prove `apply` is not among them) without opening a
+// transport, and drive the network tools through fake deps.
+func newMCPServerWithDeps(d mcpDeps) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    mcpServerName,
 		Title:   mcpServerTitle,
@@ -105,7 +151,7 @@ func newMCPServer() *mcp.Server {
 		Name:        "check",
 		Description: "Report whether a selection has drifted from live discovery: repos added/removed, default branches moved, owner type flipped. Read-only — it never rewrites the lockfile.",
 		Annotations: readOnlyRemote("goldfinger check"),
-	}, mcpCheckHandler)
+	}, d.mcpCheckHandler)
 
 	// Tools with allowed local side-effects (writing a lockfile, cloning). None
 	// writes to GitHub.
@@ -118,7 +164,7 @@ func newMCPServer() *mcp.Server {
 		Name:        "mirror",
 		Description: "Clone a frozen selection into a local workspace via ghorg. Local side-effects only (clones on disk); it never writes to GitHub and never runs git itself. Returns the workspace path and a coverage report.",
 		Annotations: writeLocalRemote("goldfinger mirror --purpose <name>"),
-	}, mcpMirrorHandler)
+	}, d.mcpMirrorHandler)
 
 	// Plan-only: NEVER opens PRs. Returns the digest-bound apply command for a
 	// human to review and run.
@@ -218,7 +264,7 @@ func mcpDoctorHandler(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (
 
 // --- check -----------------------------------------------------------------
 
-func mcpCheckHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpSelectionRef) (*mcp.CallToolResult, checkReport, error) {
+func (d mcpDeps) mcpCheckHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpSelectionRef) (*mcp.CallToolResult, checkReport, error) {
 	path, err := resolveSelectionPath(in.Name, in.Path)
 	if err != nil {
 		return nil, checkReport{}, err
@@ -227,11 +273,7 @@ func mcpCheckHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpSelectio
 	if err != nil {
 		return nil, checkReport{}, err
 	}
-	c, err := mcpClient(ctx)
-	if err != nil {
-		return nil, checkReport{}, err
-	}
-	raw, liveOwnerType, err := c.ListRepos(ctx, sel.Owner)
+	raw, liveOwnerType, err := d.listRepos(ctx, sel.Owner)
 	if err != nil {
 		return nil, checkReport{}, err
 	}
@@ -323,7 +365,7 @@ type mcpMirrorResult struct {
 	OutputTail string        `json:"outputTail"`
 }
 
-func mcpMirrorHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpMirrorIn) (*mcp.CallToolResult, mcpMirrorResult, error) {
+func (d mcpDeps) mcpMirrorHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpMirrorIn) (*mcp.CallToolResult, mcpMirrorResult, error) {
 	if err := validateMirror(mirrorValidation{branch: in.Branch, cloneDepth: in.CloneDepth}); err != nil {
 		return nil, mcpMirrorResult{}, err
 	}
@@ -348,16 +390,16 @@ func mcpMirrorHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpMirrorI
 	if err != nil {
 		return nil, mcpMirrorResult{}, err
 	}
-	token, _, err := resolveToken(ctx)
+	token, _, err := d.resolveToken(ctx)
 	if err != nil {
 		return nil, mcpMirrorResult{}, err
 	}
-	if err := requireTool("ghorg", "https://github.com/gabrie30/ghorg#installation"); err != nil {
+	if err := d.requireTool("ghorg", "https://github.com/gabrie30/ghorg#installation"); err != nil {
 		return nil, mcpMirrorResult{}, err
 	}
 	// Fail fast on a bad token before the (potentially long) clone, honouring the
 	// verify-identity-first posture without re-running discovery.
-	if _, err := verifyLoginWithClient(ctx, token); err != nil {
+	if _, err := d.verifyLogin(ctx, token); err != nil {
 		return nil, mcpMirrorResult{}, fmt.Errorf("verifying token: %w", err)
 	}
 
@@ -374,7 +416,7 @@ func mcpMirrorHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpMirrorI
 	// the token into the child env, so it never reaches argv.
 	var captured []byte
 	run := func(ctx context.Context, name string, args, env []string) error {
-		out, rerr := mcpDelegate(ctx, name, args, env, token)
+		out, rerr := d.delegate(ctx, name, args, env, token)
 		captured = out
 		return rerr
 	}

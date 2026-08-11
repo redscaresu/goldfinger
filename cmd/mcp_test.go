@@ -20,11 +20,18 @@ import (
 // live client session, so tests exercise the tools over the real MCP protocol
 // (list/call round-trip), not just the Go handler functions.
 func connectMCPTestClient(t *testing.T) *mcp.ClientSession {
+	return connectMCPTestClientWithDeps(t, defaultMCPDeps())
+}
+
+// connectMCPTestClientWithDeps is connectMCPTestClient with injectable
+// collaborators, so a test can drive the network tools (check/mirror) over the
+// real MCP protocol while staying hermetic — no token, no GitHub, no ghorg.
+func connectMCPTestClientWithDeps(t *testing.T, d mcpDeps) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
 
-	_, err := newMCPServer().Connect(ctx, serverT, nil)
+	_, err := newMCPServerWithDeps(d).Connect(ctx, serverT, nil)
 	require.NoError(t, err, "server connect")
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
@@ -412,6 +419,91 @@ func TestMCPApplyPlanDisplayStaysRunnableWhileArgvIsSourceOfTruth(t *testing.T) 
 		"Display quotes the space-bearing token so the line stays copy-pasteable")
 	assert.Equal(t, mcpDisplay(out.LiveCommand.Argv), out.LiveCommand.Display,
 		"Display must be exactly mcpDisplay(Argv) — the two never drift")
+}
+
+// TestMCPCheckReturnsDriftAsDataNotAnError is the drift-as-data contract: when a
+// selection has drifted from live discovery, the check tool must report that as a
+// SUCCESSFUL result (IsError:false, InSync:false, the removed repo listed), never
+// as a protocol error. The exit-code-1-on-drift convention is a CLI shell nicety;
+// over MCP an agent must be able to read the drift, not catch an exception. A fake
+// listRepos drops one repo, so the whole thing runs hermetically — no token, no
+// GitHub.
+func TestMCPCheckReturnsDriftAsDataNotAnError(t *testing.T) {
+	path, _ := writeTestSelection(t) // frozen: acme/alpha + acme/beta, topic "platform".
+
+	// Live discovery now returns only alpha (beta was deleted). Both repos carry the
+	// selection's frozen topic so the filter keeps them; the owner type is unchanged,
+	// isolating the drift to a single removed repo.
+	fakeList := func(_ context.Context, _ string) ([]models.Repo, string, error) {
+		return []models.Repo{
+			{Owner: "acme", Name: "alpha", DefaultBranch: "main", Topics: []string{"platform"}},
+		}, models.OwnerOrganization, nil
+	}
+	deps := defaultMCPDeps()
+	deps.listRepos = fakeList
+
+	cs := connectMCPTestClientWithDeps(t, deps)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "check",
+		Arguments: map[string]any{"path": path},
+	})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "drift must be a successful result, not a protocol error: %v", res.Content)
+
+	var out checkReport
+	decodeStructured(t, res, &out)
+
+	assert.False(t, out.InSync, "a removed repo means the selection is out of sync")
+	require.Len(t, out.Removed, 1, "exactly the one deleted repo must be reported removed")
+	assert.Equal(t, "acme/beta", out.Removed[0].Repo, "the removed repo must be named in the drift report")
+	assert.Empty(t, out.Added, "nothing was added")
+}
+
+// TestMCPMirrorPassesTokenViaEnvNeverArgv locks the token-handling contract for
+// the mirror tool end to end: the PAT must reach ghorg through its env var
+// (GHORG_GITHUB_TOKEN), and NEVER appear in argv (a process listing / crash log
+// leak). It fakes only the environment edges (token resolution, login, PATH
+// check) and a recording delegate, but runs the REAL mirror.Mirror in between —
+// so it proves the actual env/argv split the production path takes, not a
+// restatement of the test's own wiring.
+func TestMCPMirrorPassesTokenViaEnvNeverArgv(t *testing.T) {
+	const token = "ghp_secret_pat_value" //nolint:gosec // G101: fake test token, not a real credential.
+	path, _ := writeTestSelection(t)
+
+	var gotArgs, gotEnv []string
+	deps := defaultMCPDeps()
+	deps.resolveToken = func(context.Context) (string, string, error) { return token, tokenEnvVar, nil }
+	deps.verifyLogin = func(context.Context, string) (string, error) { return "acme-bot", nil }
+	deps.requireTool = func(string, string) error { return nil } // ghorg "present".
+	deps.delegate = func(_ context.Context, _ string, args, env []string, tok string) ([]byte, error) {
+		gotArgs, gotEnv = args, env
+		assert.Equal(t, token, tok, "the resolved token must be handed to the delegate for redaction")
+		return []byte("ok"), nil
+	}
+
+	cs := connectMCPTestClientWithDeps(t, deps)
+	// A dry-run clones nothing, so the handler skips on-disk reconcile/manifest and
+	// the assertions stay focused on the env/argv split (still exercises real Mirror).
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "mirror",
+		Arguments: map[string]any{
+			"path":      path,
+			"workspace": t.TempDir(),
+			"dry_run":   true,
+		},
+	})
+	require.NoError(t, err)
+	require.Falsef(t, res.IsError, "mirror dry-run must succeed: %v", res.Content)
+
+	assert.Contains(t, gotEnv, "GHORG_GITHUB_TOKEN="+token,
+		"the PAT must reach ghorg through its own env var")
+	for _, a := range gotArgs {
+		assert.NotContainsf(t, a, token, "the PAT must never appear in argv: %q", a)
+	}
+	// Belt and braces: the source env var must not have carried the raw PAT through
+	// either (mirror.Mirror strips it), so ghorg reads it only from GHORG_GITHUB_TOKEN.
+	assert.NotContains(t, gotEnv, tokenEnvVar+"="+token,
+		"the source token env var must be stripped before ghorg runs")
 }
 
 // decodeStructured round-trips a tool result's structured content into v.
