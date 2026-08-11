@@ -364,6 +364,56 @@ func TestMCPSelectionsReflectsRegistryOnDisk(t *testing.T) {
 	assert.Equal(t, 2, *entry.RepoCount)
 }
 
+// TestMCPApplyPlanDisplayStaysRunnableWhileArgvIsSourceOfTruth locks the
+// human-facing contract of the plan command: Argv is the verbatim source of truth a
+// machine runs, and Display is a copy-pasteable shell line that quotes exactly the
+// tokens that need it — so a human pasting Display gets the same argv back. The two
+// must never drift, and shellQuote must escape correctly (embedded quotes, spaces,
+// empty), or a pasted command could run something different from what was planned.
+func TestMCPApplyPlanDisplayStaysRunnableWhileArgvIsSourceOfTruth(t *testing.T) {
+	// shellQuote: safe-set tokens pass through unquoted; anything else is
+	// single-quoted, an embedded single quote is escaped, and empty becomes ''.
+	for in, want := range map[string]string{
+		"s/old/new/": "s/old/new/", // conservative safe set: no quoting
+		"main":       "main",
+		"a b":        "'a b'",     // a space forces quoting
+		"it's":       `'it'\''s'`, // embedded single quote escaped, not dropped
+		"":           "''",        // empty token is explicit, not a vanished arg
+	} {
+		assert.Equalf(t, want, shellQuote(in), "shellQuote(%q)", in)
+	}
+
+	// Cross-surface: a script token carrying a space must survive verbatim in Argv
+	// but be quoted in Display, and Display must equal mcpDisplay(Argv) exactly — so a
+	// future handler cannot hand-build a Display that diverges from the real argv.
+	t.Setenv(tokenEnvVar, "")
+	stubGhToken(t, "", false)
+	path, _ := writeTestSelection(t)
+	cs := connectMCPTestClient(t)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "apply_plan",
+		Arguments: map[string]any{
+			"path":           path,
+			"branch":         "b",
+			"commit_message": "m",
+			"pr_title":       "t",
+			"sign":           models.SignLocal,
+			"script":         []string{"sed", "-i", "s/a b/c/", "go.mod"},
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "apply_plan must succeed offline: %v", res.Content)
+
+	var out mcpApplyPlanResult
+	decodeStructured(t, res, &out)
+	assert.Equal(t, []string{"sed", "-i", "s/a b/c/", "go.mod"}, scriptAfterSeparator(out.LiveCommand.Argv),
+		"Argv carries the space-bearing token verbatim — it is the source of truth")
+	assert.Contains(t, out.LiveCommand.Display, "'s/a b/c/'",
+		"Display quotes the space-bearing token so the line stays copy-pasteable")
+	assert.Equal(t, mcpDisplay(out.LiveCommand.Argv), out.LiveCommand.Display,
+		"Display must be exactly mcpDisplay(Argv) — the two never drift")
+}
+
 // decodeStructured round-trips a tool result's structured content into v.
 func decodeStructured(t *testing.T, res *mcp.CallToolResult, v any) {
 	t.Helper()
