@@ -74,11 +74,11 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, st
 		return repos, models.OwnerUser, err
 	}
 
-	u, _, err := c.gh.Users.Get(ctx, owner)
+	ownerType, err := c.OwnerType(ctx, owner)
 	if err != nil {
-		return nil, "", fmt.Errorf("look up owner %q: %w", owner, err)
+		return nil, "", err
 	}
-	if u.GetType() == models.OwnerOrganization {
+	if ownerType == models.OwnerOrganization {
 		repos, err := c.paginate(func(page int) ([]*github.Repository, *github.Response, error) {
 			return c.gh.Repositories.ListByOrg(ctx, owner, &github.RepositoryListByOrgOptions{
 				ListOptions: github.ListOptions{Page: page, PerPage: perPage},
@@ -92,6 +92,30 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, st
 		})
 	})
 	return repos, models.OwnerUser, err
+}
+
+// OwnerType resolves whether owner is a "User" or an "Organization" via a
+// read-only lookup, without listing any repositories. select uses it to stamp a
+// valid ownerType on an explicit selection (`--repo`/`--repos-from`) that
+// resolved to zero repos under --allow-empty — there is no repo to read the type
+// from, so an empty explicit lockfile would otherwise carry an empty (schema-
+// invalid) ownerType, unlike an empty filtered one. The authenticated identity
+// is always a User. It mutates nothing.
+func (c *Client) OwnerType(ctx context.Context, owner string) (string, error) {
+	if err := c.ensureLogin(ctx); err != nil {
+		return "", err
+	}
+	if owner == c.login {
+		return models.OwnerUser, nil
+	}
+	u, _, err := c.gh.Users.Get(ctx, owner)
+	if err != nil {
+		return "", fmt.Errorf("look up owner %q: %w", owner, err)
+	}
+	if u.GetType() == models.OwnerOrganization {
+		return models.OwnerOrganization, nil
+	}
+	return models.OwnerUser, nil
 }
 
 // GetRepo resolves a single repository by owner/name via a read-only GET — the

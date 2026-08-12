@@ -34,6 +34,7 @@ type branchResolver interface {
 	repoResolver
 	BranchExists(ctx context.Context, owner, repo, branch string) (bool, error)
 	GetRepo(ctx context.Context, owner, name string) (models.Repo, string, error)
+	OwnerType(ctx context.Context, owner string) (string, error)
 }
 
 func newSelectCmd() *cobra.Command {
@@ -250,10 +251,34 @@ func buildExplicitSelection(ctx context.Context, r branchResolver, o selectOpts,
 		if err != nil {
 			return models.Selection{}, err
 		}
+		// GetRepo follows GitHub's rename/transfer redirect, so a named repo can
+		// come back under a different owner or name than requested. Freezing that
+		// silently would break the single-owner model — Selection.Owner (--org)
+		// would disagree with a repo's real owner, and mirror (which targets by
+		// --org + basename) and apply (which targets by full name) would then act
+		// on different repositories. Refuse it: an explicit selection freezes
+		// exactly what was named. Case-insensitive, since GitHub owner/repo names
+		// are.
+		if !strings.EqualFold(repo.Owner, t.org) || !strings.EqualFold(repo.Name, name) {
+			return models.Selection{}, fmt.Errorf(
+				"named repo %s/%s resolved to %s — it was renamed or transferred; re-run select naming its current owner/name (owner must be --org %s)",
+				t.org, name, repo.FullName(), t.org)
+		}
 		if ownerType == "" {
 			ownerType = ot
 		}
 		selected = append(selected, repo)
+	}
+
+	// An explicit selection allowed to be empty (--allow-empty) has no repo to
+	// read the owner type from; probe it directly so the lockfile still records a
+	// valid, enum-constrained ownerType, consistent with an empty filtered one.
+	if len(selected) == 0 {
+		ot, err := r.OwnerType(ctx, t.org)
+		if err != nil {
+			return models.Selection{}, err
+		}
+		ownerType = ot
 	}
 
 	branches := dedupeNonEmpty(o.branchesToCheck)
@@ -313,7 +338,28 @@ func resolveTargetRepos(t targeting) ([]string, error) {
 		}
 		names = append(names, name)
 	}
-	return dedupeNonEmpty(names), nil
+	return dedupeRepoNames(names), nil
+}
+
+// dedupeRepoNames removes empty entries and case-insensitive duplicates,
+// preserving first-seen order and casing. GitHub repo names are case-insensitive,
+// so "svc" and "Svc" name the same repository; collapsing them here stops two
+// entries resolving to the same repo and landing it in the selection twice.
+func dedupeRepoNames(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	var out []string
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		key := strings.ToLower(s)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // readReposFrom reads a --repos-from file into a list of repo basenames, one per
@@ -344,7 +390,7 @@ func normalizeRepoName(org, entry string) (string, error) {
 		return entry, nil
 	}
 	owner, name, _ := strings.Cut(entry, "/")
-	if owner != org {
+	if !strings.EqualFold(owner, org) {
 		return "", fmt.Errorf("repo %q names owner %q but --org is %q; list repos as bare names (owner comes from --org) or as %s/<name>", entry, owner, org, org)
 	}
 	if name == "" || strings.Contains(name, "/") {

@@ -17,11 +17,12 @@ import (
 )
 
 type fakeResolver struct {
-	login     string
-	repos     []models.Repo
-	ownerType string
-	verifyErr error
-	listErr   error
+	login        string
+	repos        []models.Repo
+	ownerType    string
+	ownerTypeErr error
+	verifyErr    error
+	listErr      error
 
 	// Branch-presence support for `select --branch-presence`.
 	presentBranches map[string]bool // "owner/name@branch" -> exists
@@ -40,6 +41,10 @@ func (f fakeResolver) Verify(context.Context) (string, error) {
 
 func (f fakeResolver) ListRepos(context.Context, string) ([]models.Repo, string, error) {
 	return f.repos, f.ownerType, f.listErr
+}
+
+func (f fakeResolver) OwnerType(context.Context, string) (string, error) {
+	return f.ownerType, f.ownerTypeErr
 }
 
 func (f fakeResolver) BranchExists(_ context.Context, owner, repo, branch string) (bool, error) {
@@ -189,7 +194,7 @@ func TestRunSelectExplicitEmptyObeysAllowEmpty(t *testing.T) {
 		assert.Contains(t, err.Error(), "--allow-empty")
 	})
 
-	t.Run("--allow-empty writes an empty explicit lockfile", func(t *testing.T) {
+	t.Run("--allow-empty writes an empty explicit lockfile with a valid ownerType", func(t *testing.T) {
 		o := base
 		o.allowEmpty = true
 		o.selectionPath = filepath.Join(t.TempDir(), "goldfinger.selection")
@@ -199,6 +204,49 @@ func TestRunSelectExplicitEmptyObeysAllowEmpty(t *testing.T) {
 		sel, err := selection.Read(o.selectionPath)
 		require.NoError(t, err)
 		assert.Empty(t, sel.Repos)
+		// With no repo to read the type from, ownerType is probed directly so the
+		// lockfile stays schema-valid (ownerType is an enum, not "").
+		assert.Equal(t, models.OwnerOrganization, sel.OwnerType)
+	})
+}
+
+// TestRunSelectExplicitRejectsRedirectedRepo locks the single-owner invariant
+// against GitHub's rename/transfer redirect: GetRepo can return a repo under a
+// different owner or name than requested, and freezing that would make
+// Selection.Owner disagree with a repo's real owner. Such a mismatch is a hard
+// error, not a silent acceptance.
+func TestRunSelectExplicitRejectsRedirectedRepo(t *testing.T) {
+	run := func(t *testing.T, got models.Repo) error {
+		t.Helper()
+		r := fakeResolver{
+			login:     "acme-bot",
+			ownerType: models.OwnerOrganization,
+			getRepos:  map[string]models.Repo{"svc": got},
+		}
+		return runSelect(context.Background(), r, selectOpts{
+			t:             targeting{org: "acme", repos: []string{"svc"}},
+			selectionPath: filepath.Join(t.TempDir(), "goldfinger.selection"),
+			tool:          "goldfinger test",
+			source:        tokenSourceEnv,
+		}, &bytes.Buffer{}, &bytes.Buffer{})
+	}
+
+	t.Run("transfer to a different owner is rejected", func(t *testing.T) {
+		err := run(t, models.Repo{Owner: "other", Name: "svc", DefaultBranch: "main"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "other/svc")
+		assert.Contains(t, err.Error(), "renamed or transferred")
+	})
+
+	t.Run("rename to a different name is rejected", func(t *testing.T) {
+		err := run(t, models.Repo{Owner: "acme", Name: "svc-renamed", DefaultBranch: "main"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "acme/svc-renamed")
+	})
+
+	t.Run("a case-only difference is accepted (GitHub names are case-insensitive)", func(t *testing.T) {
+		err := run(t, models.Repo{Owner: "Acme", Name: "SVC", DefaultBranch: "main"})
+		require.NoError(t, err, "same repo in different casing is not a redirect")
 	})
 }
 
@@ -217,6 +265,18 @@ func TestResolveTargetRepos(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "other")
 		assert.Contains(t, err.Error(), "--org")
+	})
+
+	t.Run("owner prefix matches --org case-insensitively", func(t *testing.T) {
+		got, err := resolveTargetRepos(targeting{org: "acme", repos: []string{"ACME/svc-a"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"svc-a"}, got, "GitHub owner logins are case-insensitive")
+	})
+
+	t.Run("case-only duplicate names collapse to first-seen", func(t *testing.T) {
+		got, err := resolveTargetRepos(targeting{org: "acme", repos: []string{"Svc", "svc", "acme/SVC"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Svc"}, got, "one repo (GitHub names are case-insensitive), first casing kept")
 	})
 
 	t.Run("reads --repos-from, ignoring blanks and comments", func(t *testing.T) {

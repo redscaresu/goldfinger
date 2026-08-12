@@ -179,6 +179,47 @@ func TestGetRepo(t *testing.T) {
 	})
 }
 
+func TestOwnerType(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"me"}`)
+	})
+	mux.HandleFunc("/users/acme", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"acme","type":"Organization"}`)
+	})
+	mux.HandleFunc("/users/bob", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"bob","type":"User"}`)
+	})
+	mux.HandleFunc("/users/ghost", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	c := newTestClient(t, mux)
+
+	t.Run("organization owner", func(t *testing.T) {
+		ot, err := c.OwnerType(context.Background(), "acme")
+		require.NoError(t, err)
+		assert.Equal(t, models.OwnerOrganization, ot)
+	})
+
+	t.Run("user owner", func(t *testing.T) {
+		ot, err := c.OwnerType(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Equal(t, models.OwnerUser, ot)
+	})
+
+	t.Run("the authenticated identity is a user without a lookup", func(t *testing.T) {
+		ot, err := c.OwnerType(context.Background(), "me")
+		require.NoError(t, err)
+		assert.Equal(t, models.OwnerUser, ot)
+	})
+
+	t.Run("a missing owner errors", func(t *testing.T) {
+		_, err := c.OwnerType(context.Background(), "ghost")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ghost")
+	})
+}
+
 func TestListReposPropagatesError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/ghost", func(w http.ResponseWriter, r *http.Request) {
