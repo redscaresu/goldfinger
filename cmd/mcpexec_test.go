@@ -94,6 +94,60 @@ func TestMCPDelegateRedactsEchoedToken(t *testing.T) {
 	assert.Contains(t, string(out), "[REDACTED]")
 }
 
+func TestMCPProbeReturnsStdoutOnlyDiscardsStderr(t *testing.T) {
+	// The contract that separates mcpProbe from mcpRun: callers parse stdout
+	// exactly (a version line, a token), so stderr noise must NOT be folded in.
+	// A gh update notice or a tool's deprecation warning on stderr would otherwise
+	// corrupt the parsed value. The child writes distinct text to each stream.
+	out, err := mcpProbe(context.Background(), "sh",
+		[]string{"-c", "echo the-real-value; echo noisy-warning 1>&2"}, nil)
+	require.NoError(t, err)
+	s := strings.TrimSpace(string(out))
+	assert.Equal(t, "the-real-value", s, "only stdout is captured")
+	assert.NotContains(t, s, "noisy-warning", "stderr must not corrupt the parsed stdout value")
+}
+
+func TestMCPProbeStdinIsNilNotServerStdin(t *testing.T) {
+	// With Stdin nil the child reads /dev/null and hits EOF immediately rather than
+	// blocking on the server's real stdin (which would deadlock the MCP server).
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		out, err := mcpProbe(context.Background(), "sh", []string{"-c", "cat; echo ok"}, nil)
+		assert.NoError(t, err)
+		assert.Contains(t, string(out), "ok")
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("mcpProbe blocked on stdin — child did not get /dev/null")
+	}
+}
+
+func TestMCPProbeKillsProcessGroupOnCancel(t *testing.T) {
+	// Same lifecycle guard as mcpRun: a backgrounded grandchild (a wedged gh helper
+	// holding the pipe, in the real case) is reaped by the process-group kill on
+	// cancel rather than orphaned to keep the call from returning.
+	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	script := "sleep 60 & echo $! > " + pidFile + "; wait"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = mcpProbe(ctx, "sh", []string{"-c", script}, nil)
+	}()
+
+	pid := waitForPID(t, pidFile)
+	assert.True(t, processAlive(pid), "grandchild should be running before cancel")
+
+	cancel()
+	<-done
+
+	require.Eventually(t, func() bool { return !processAlive(pid) }, 10*time.Second, 20*time.Millisecond,
+		"grandchild survived cancel — process group was not killed")
+}
+
 func TestMCPRunKillsProcessGroupOnCancel(t *testing.T) {
 	// The child (sh) backgrounds a long sleep — a grandchild in the same process
 	// group — and records its PID, then waits. On cancel, killing only the direct
