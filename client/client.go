@@ -94,6 +94,27 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, st
 	return repos, models.OwnerUser, err
 }
 
+// GetRepo resolves a single repository by owner/name via a read-only GET — the
+// per-repo lookup an EXPLICIT selection (`select --repo` / `--repos-from`) needs,
+// where the operator names the set instead of resolving a filter. It returns the
+// mapped repo and the owner's type ("User" | "Organization"), taken from the
+// repo's own owner object so an explicit selection records the same ownerType a
+// filtered one would (mirror passes it to ghorg as --clone-type). A 404 (missing,
+// renamed, or not visible to this token) is a clear hard error: a repo the
+// operator named explicitly must fail loudly, never be silently dropped. Archived
+// repos resolve normally — dropping them is discovery.Select's job, and an
+// explicit selection deliberately keeps them. It mutates nothing.
+func (c *Client) GetRepo(ctx context.Context, owner, name string) (models.Repo, string, error) {
+	r, resp, err := c.gh.Repositories.Get(ctx, owner, name)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return models.Repo{}, "", fmt.Errorf("repository %s/%s not found (deleted, renamed, or not visible to this token) — check the name under --org", owner, name)
+		}
+		return models.Repo{}, "", fmt.Errorf("look up repo %s/%s: %w", owner, name, err)
+	}
+	return toRepo(r), r.GetOwner().GetType(), nil
+}
+
 // BranchExists reports whether branch exists on owner/repo, via a read-only
 // GET of the branch. A 404 means the branch is absent (false, no error); any
 // other API error propagates so callers never mistake a transient failure for

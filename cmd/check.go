@@ -26,6 +26,10 @@ func newCheckCmd() *cobra.Command {
 			"diffs the result against the lockfile — reporting repos added, removed " +
 			"(with a reason), whose default branch has moved, or whose owner type has " +
 			"flipped since it was resolved.\n\n" +
+			"For an EXPLICIT selection (select --repo/--repos-from), there is no filter " +
+			"to re-run, so check instead diffs the frozen set against live existence: a " +
+			"named repo that has vanished shows as removed, one that still exists stays " +
+			"in sync (archived repos included), and no repo is ever reported as added.\n\n" +
 			"It is read-only: it never rewrites the lockfile (re-run `select` to " +
 			"refresh) and never touches mirror or apply. Exit status is 0 in sync, " +
 			"1 when drift is found, and 2 on error — usable as a CI gate.",
@@ -121,7 +125,19 @@ type checkResult struct {
 // function stays a pure repos-only diff. It matters because mirror passes the
 // owner type to ghorg as --clone-type; a user<->org flip breaks mirroring.
 func computeCheckResult(sel models.Selection, raw []models.Repo, liveOwnerType string) checkResult {
-	live := discovery.Select(raw, discovery.Filter{AllRepos: sel.Filter.AllRepos, Topics: sel.Filter.Topics})
+	// An explicit selection (Filter.Repos set) was never filter-derived, so
+	// re-running a filter against it is meaningless — an empty filter matches
+	// nothing and every frozen repo would falsely read as removed. Instead diff the
+	// frozen set against live existence: liveForExplicit is the frozen set
+	// intersected with the raw live repos (archived kept), so a still-present repo
+	// stays in sync, a vanished one shows as removed, and no repo is ever invented
+	// as added.
+	var live []models.Repo
+	if len(sel.Filter.Repos) > 0 {
+		live = liveForExplicit(raw, sel.Repos)
+	} else {
+		live = discovery.Select(raw, discovery.Filter{AllRepos: sel.Filter.AllRepos, Topics: sel.Filter.Topics})
+	}
 	diff := discovery.Compare(sel.Repos, live, raw)
 	ownerTypeMoved := sel.OwnerType != "" && liveOwnerType != "" && sel.OwnerType != liveOwnerType
 	return checkResult{
@@ -131,6 +147,26 @@ func computeCheckResult(sel models.Selection, raw []models.Repo, liveOwnerType s
 		LiveOwnerType:  liveOwnerType,
 		InSync:         diff.Empty() && !ownerTypeMoved,
 	}
+}
+
+// liveForExplicit returns the live view of an EXPLICIT selection: the raw live
+// repos whose full name is in the frozen set. Unlike discovery.Select it keeps
+// archived repos — an explicit selection names them on purpose — and it can never
+// introduce a repo the operator did not name (live ⊆ locked by construction), so
+// discovery.Compare reports a named-but-vanished repo as Removed and never invents
+// an Added. Membership is by owner/name full name, the same key Compare uses.
+func liveForExplicit(raw, locked []models.Repo) []models.Repo {
+	want := make(map[string]struct{}, len(locked))
+	for _, r := range locked {
+		want[r.FullName()] = struct{}{}
+	}
+	var out []models.Repo
+	for _, r := range raw {
+		if _, ok := want[r.FullName()]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // runCheck resolves live discovery for the selection's owner, applies the

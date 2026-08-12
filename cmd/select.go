@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/redscaresu/goldfinger/client"
@@ -24,12 +26,14 @@ type repoResolver interface {
 	ListRepos(ctx context.Context, owner string) ([]models.Repo, string, error)
 }
 
-// branchResolver extends repoResolver with the read-only branch lookup that
-// `select --branch-presence` needs. `check` keeps to the narrower repoResolver,
-// so it does not depend on a method it never calls.
+// branchResolver extends repoResolver with the read-only lookups `select` needs
+// beyond a filter resolve: BranchExists for `--branch-presence`, and GetRepo for
+// an explicit `--repo`/`--repos-from` selection. `check` keeps to the narrower
+// repoResolver, so it does not depend on methods it never calls.
 type branchResolver interface {
 	repoResolver
 	BranchExists(ctx context.Context, owner, repo, branch string) (bool, error)
+	GetRepo(ctx context.Context, owner, name string) (models.Repo, string, error)
 }
 
 func newSelectCmd() *cobra.Command {
@@ -53,7 +57,8 @@ func newSelectCmd() *cobra.Command {
 				return err
 			}
 			announceTokenSource(errOut, source)
-			if err := validateTargeting(t); err != nil {
+			t, err = prepareTargeting(t)
+			if err != nil {
 				return err
 			}
 			path, err := resolveSelectionPath(name, selectionPath)
@@ -176,6 +181,9 @@ func runSelect(ctx context.Context, r branchResolver, o selectOpts, out, errOut 
 // the empty-selection diagnostic name the identity in play. errOut receives the
 // branch-presence banner; MCP passes io.Discard.
 func buildSelectionFromLive(ctx context.Context, r branchResolver, o selectOpts, login string, errOut io.Writer) (models.Selection, error) {
+	if o.t.explicit() {
+		return buildExplicitSelection(ctx, r, o, login, errOut)
+	}
 	t := o.t
 	repos, ownerType, err := r.ListRepos(ctx, t.org)
 	if err != nil {
@@ -215,6 +223,148 @@ func buildSelectionFromLive(ctx context.Context, r branchResolver, o selectOpts,
 		Repos:           selected,
 		BranchesChecked: branches,
 	}, nil
+}
+
+// buildExplicitSelection resolves an EXPLICIT selection: each named repo is
+// looked up directly via read-only GET (r.GetRepo), rather than listing the owner
+// and applying a filter. A 404 on any named repo is a hard error (surfaced from
+// GetRepo) — an explicitly named repo that can't be resolved must fail loudly,
+// like a wrong topic or owner does. Archived repos are kept: naming a repo is
+// deliberate intent that overrides discovery.Select's archived-skip. The owner
+// type is taken from the repos' own owner objects (all share --org), so an
+// explicit selection records the same ownerType a filtered one would. The
+// resulting lockfile carries Filter.Repos as the explicit-mode marker `check`
+// keys on.
+func buildExplicitSelection(ctx context.Context, r branchResolver, o selectOpts, login string, errOut io.Writer) (models.Selection, error) {
+	t := o.t
+	names := t.repos // already merged/normalised/deduped by resolveTargetRepos
+
+	if len(names) == 0 && !o.allowEmpty {
+		return models.Selection{}, emptyExplicitSelectionError(o.source, login, t.org)
+	}
+
+	selected := make([]models.Repo, 0, len(names))
+	var ownerType string
+	for _, name := range names {
+		repo, ot, err := r.GetRepo(ctx, t.org, name)
+		if err != nil {
+			return models.Selection{}, err
+		}
+		if ownerType == "" {
+			ownerType = ot
+		}
+		selected = append(selected, repo)
+	}
+
+	branches := dedupeNonEmpty(o.branchesToCheck)
+	if err := annotateBranchPresence(ctx, r, selected, branches, errOut); err != nil {
+		return models.Selection{}, err
+	}
+
+	return models.Selection{
+		Version:         models.SelectionVersion,
+		Owner:           t.org,
+		OwnerType:       ownerType,
+		Filter:          models.SelectionFilter{Repos: names},
+		ResolvedAt:      time.Now().UTC(),
+		Tool:            o.tool,
+		Repos:           selected,
+		BranchesChecked: branches,
+	}, nil
+}
+
+// prepareTargeting validates the selection mode and, for an explicit selection,
+// resolves --repo/--repos-from into the final normalised, deduped repo-basename
+// list (stored back on targeting.repos). It is shared by the CLI `select` command
+// and the MCP `select` tool so both enforce identical rules. It never re-reads the
+// file after this: reposFrom stays set only so targeting.explicit() keeps
+// reporting true for a zero-repo explicit set.
+func prepareTargeting(t targeting) (targeting, error) {
+	if err := validateTargeting(t); err != nil {
+		return t, err
+	}
+	if t.explicit() {
+		repos, err := resolveTargetRepos(t)
+		if err != nil {
+			return t, err
+		}
+		t.repos = repos
+	}
+	return t, nil
+}
+
+// resolveTargetRepos merges the --repo values with the basenames read from a
+// --repos-from file (if any), normalises each against --org, and dedupes,
+// preserving first-seen order. The result is the explicit repo-basename list.
+func resolveTargetRepos(t targeting) ([]string, error) {
+	raw := append([]string{}, t.repos...)
+	if t.reposFrom != "" {
+		fromFile, err := readReposFrom(t.reposFrom)
+		if err != nil {
+			return nil, err
+		}
+		raw = append(raw, fromFile...)
+	}
+	names := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		name, err := normalizeRepoName(t.org, entry)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return dedupeNonEmpty(names), nil
+}
+
+// readReposFrom reads a --repos-from file into a list of repo basenames, one per
+// line, ignoring blank lines and #-comments (with surrounding whitespace trimmed).
+func readReposFrom(path string) ([]string, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // operator-supplied path, read-only
+	if err != nil {
+		return nil, fmt.Errorf("read --repos-from %s: %w", path, err)
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out, nil
+}
+
+// normalizeRepoName reduces an explicit repo entry to a bare basename under org.
+// A bare name passes through. An "owner/name" entry is accepted only when owner
+// equals --org (so a value pasted from GitHub still works), reduced to its
+// basename; a different owner is a hard error — the single-owner model takes the
+// owner from --org, not from the entry.
+func normalizeRepoName(org, entry string) (string, error) {
+	if !strings.Contains(entry, "/") {
+		return entry, nil
+	}
+	owner, name, _ := strings.Cut(entry, "/")
+	if owner != org {
+		return "", fmt.Errorf("repo %q names owner %q but --org is %q; list repos as bare names (owner comes from --org) or as %s/<name>", entry, owner, org, org)
+	}
+	if name == "" || strings.Contains(name, "/") {
+		return "", fmt.Errorf("invalid repo name %q: expected a bare name or %s/<name>", entry, org)
+	}
+	return name, nil
+}
+
+// emptyExplicitSelectionError builds a diagnostic for an explicit selection that
+// resolved to zero repos — the --repos-from file was empty or all comments, or no
+// --repo was given. It names the identity in play so the operator can tell a
+// genuine mistake from an intended empty set (--allow-empty).
+func emptyExplicitSelectionError(source, login, org string) error {
+	who := login
+	if who == "" {
+		who = "unknown"
+	}
+	return fmt.Errorf("explicit selection for owner %q resolved to zero repos (authenticated as %s via %s). "+
+		"The --repos-from file may be empty or all-comments, or no --repo was given. "+
+		"If an empty selection is genuinely intended, re-run with --allow-empty", org, who, source)
 }
 
 // emptySelectionError builds a diagnostic for a zero-repo result that names the

@@ -24,9 +24,10 @@ type Removed struct {
 }
 
 // BranchChange records a repo whose recorded default branch differs from the
-// live one. This matters because apply's base routing falls back to the recorded
-// default branch when no global --base-branch is set, so a silent move changes
-// where a PR lands.
+// live one. This matters because when no global --base-branch is set, apply
+// passes no base to multi-gitter, which then targets each repo's LIVE default
+// branch — so a silent move changes where a PR lands. (goldfinger does not route
+// on the recorded default itself; resolveBase uses it only for plan/banner text.)
 type BranchChange struct {
 	Repo models.Repo
 	Was  string

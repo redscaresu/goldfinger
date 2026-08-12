@@ -99,7 +99,7 @@ func TestSelectValidation(t *testing.T) {
 			name:    "neither all-repos nor topic",
 			token:   "ghp_x",
 			args:    []string{"select", "--org", "acme"},
-			wantErr: "one of --all-repos or --topic",
+			wantErr: "one of --all-repos, --topic, or --repo/--repos-from is required",
 		},
 		{
 			name:    "both all-repos and topic",

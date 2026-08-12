@@ -157,7 +157,7 @@ func newMCPServerWithDeps(d mcpDeps) *mcp.Server {
 	// writes to GitHub.
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "select",
-		Description: "Resolve an owner's repos by topic (or all repos) and freeze them as a selection lockfile. Writes the lockfile locally; it never writes to GitHub. Returns the written path, the full lockfile, and its repo-set digest.",
+		Description: "Resolve an owner's repos by topic, all repos, or an explicit set of named repos, and freeze them as a selection lockfile. Writes the lockfile locally; it never writes to GitHub. Returns the written path, the full lockfile, and its repo-set digest.",
 		Annotations: writeLocalRemote("goldfinger select"),
 	}, mcpSelectHandler)
 	mcp.AddTool(srv, &mcp.Tool{
@@ -288,15 +288,16 @@ func (d mcpDeps) mcpCheckHandler(ctx context.Context, _ *mcp.CallToolRequest, in
 type mcpSelectIn struct {
 	mcpSelectionRef
 	Org            string   `json:"org" jsonschema:"the GitHub owner (org or user login) to resolve repos for"`
-	AllRepos       bool     `json:"all_repos,omitempty" jsonschema:"select every non-archived repo (mutually exclusive with topics; exactly one is required)"`
-	Topics         []string `json:"topics,omitempty" jsonschema:"select repos carrying any of these topics (mutually exclusive with all_repos)"`
+	AllRepos       bool     `json:"all_repos,omitempty" jsonschema:"select every non-archived repo (one selection mode; mutually exclusive with topics/repos)"`
+	Topics         []string `json:"topics,omitempty" jsonschema:"select repos carrying any of these topics (one selection mode; mutually exclusive with all_repos/repos)"`
+	Repos          []string `json:"repos,omitempty" jsonschema:"select this explicit set of repo basenames under org (one selection mode; mutually exclusive with all_repos/topics); a named repo that 404s is a hard error and archived repos are included"`
 	BranchPresence []string `json:"branch_presence,omitempty" jsonschema:"record, read-only, whether each selected repo has these branches, frozen into the lockfile for a later mirror --branch"`
-	AllowEmpty     bool     `json:"allow_empty,omitempty" jsonschema:"write a lockfile even when the filter matches zero repos (default: a zero-repo result is an error)"`
+	AllowEmpty     bool     `json:"allow_empty,omitempty" jsonschema:"write a lockfile even when the selection matches zero repos (default: a zero-repo result is an error)"`
 }
 
 func mcpSelectHandler(ctx context.Context, _ *mcp.CallToolRequest, in mcpSelectIn) (*mcp.CallToolResult, selectJSONReport, error) {
-	t := targeting{org: in.Org, allRepos: in.AllRepos, topics: in.Topics}
-	if err := validateTargeting(t); err != nil {
+	t, err := prepareTargeting(targeting{org: in.Org, allRepos: in.AllRepos, topics: in.Topics, repos: in.Repos})
+	if err != nil {
 		return nil, selectJSONReport{}, err
 	}
 	path, err := resolveSelectionPath(in.Name, in.Path)

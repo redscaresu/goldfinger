@@ -57,6 +57,15 @@ const (
 type SelectionFilter struct {
 	AllRepos bool     `json:"allRepos"`
 	Topics   []string `json:"topics,omitempty"`
+
+	// Repos, when non-empty, marks an EXPLICIT selection: the operator named an
+	// exact set of repo basenames (`select --repo` / `--repos-from`) rather than
+	// resolving a topic/all-repos filter. It is the explicit-mode marker `check`
+	// keys on — for such a selection, drift is the frozen set diffed against live
+	// existence, not a re-run of a filter (which would match nothing and report
+	// every repo as removed). Additive and omitempty, so an older reader ignores
+	// it and a filtered selection omits it entirely.
+	Repos []string `json:"repos,omitempty"`
 }
 
 // SelectionVersion is the current lockfile schema version. v2 added per-repo

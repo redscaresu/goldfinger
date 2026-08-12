@@ -183,7 +183,25 @@ func TestValidateTargeting(t *testing.T) {
 		{
 			name:    "neither all-repos nor topic",
 			in:      targeting{org: "acme"},
-			wantErr: "one of --all-repos or --topic",
+			wantErr: "one of --all-repos, --topic, or --repo/--repos-from is required",
+		},
+		{
+			name: "explicit repo ok",
+			in:   targeting{org: "acme", repos: []string{"svc-a"}},
+		},
+		{
+			name: "explicit repos-from ok",
+			in:   targeting{org: "acme", reposFrom: "repos.txt"},
+		},
+		{
+			name:    "explicit and topic are mutually exclusive",
+			in:      targeting{org: "acme", topics: []string{"platform"}, repos: []string{"svc-a"}},
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "explicit and all-repos are mutually exclusive",
+			in:      targeting{org: "acme", allRepos: true, repos: []string{"svc-a"}},
+			wantErr: "mutually exclusive",
 		},
 	}
 	for _, tt := range tests {

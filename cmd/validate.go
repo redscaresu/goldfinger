@@ -9,16 +9,27 @@ import (
 )
 
 // validateTargeting enforces the repo-selection rules: an org is required, and
-// exactly one of --all-repos or --topic must be given.
+// exactly one of three mutually exclusive modes must be given — --all-repos, one
+// or more --topic, or an explicit set via --repo / --repos-from.
 func validateTargeting(t targeting) error {
 	if t.org == "" {
 		return errors.New("--org is required")
 	}
-	if t.allRepos && len(t.topics) > 0 {
-		return errors.New("--all-repos and --topic are mutually exclusive")
+	modes := 0
+	if t.allRepos {
+		modes++
 	}
-	if !t.allRepos && len(t.topics) == 0 {
-		return errors.New("one of --all-repos or --topic is required")
+	if len(t.topics) > 0 {
+		modes++
+	}
+	if t.explicit() {
+		modes++
+	}
+	if modes == 0 {
+		return errors.New("one of --all-repos, --topic, or --repo/--repos-from is required")
+	}
+	if modes > 1 {
+		return errors.New("--all-repos, --topic, and --repo/--repos-from are mutually exclusive")
 	}
 	return nil
 }
