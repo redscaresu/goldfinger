@@ -378,6 +378,12 @@
             "allRepos": {
               "type": "boolean"
             },
+            "repos": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "topics": {
               "items": {
                 "type": "string"
@@ -591,6 +597,12 @@
               "properties": {
                 "allRepos": {
                   "type": "boolean"
+                },
+                "repos": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 "topics": {
                   "items": {

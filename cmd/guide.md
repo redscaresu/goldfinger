@@ -41,8 +41,20 @@ WORKFLOW
   1. Select — resolve and freeze the repo set:
        goldfinger select --org <owner> --all-repos
        goldfinger select --org <owner> --topic platform --topic payments
+       goldfinger select --org <owner> --repo svc-a --repo svc-b
+       goldfinger select --org <owner> --repos-from repos.txt
      Writes ./goldfinger.selection (JSON: owner/name list + provenance). --org
-     accepts a GitHub org OR user. stdout is terse by default — the count is on
+     accepts a GitHub org OR user. Pick exactly one selection mode (they are
+     mutually exclusive): --all-repos, one or more --topic, or an EXPLICIT set of
+     named repos via --repo (repeatable) / --repos-from <file> (one bare name per
+     line under --org; blank lines and #-comments ignored). Explicit mode resolves
+     each named repo with a targeted read-only GET, so a name that 404s is a hard
+     error (not silently dropped) and archived repos are INCLUDED (a topic/all
+     filter would skip them). Use it for a hand-picked set — e.g. a fixed CVE
+     rollout across a handful of repos — instead of hand-authoring the lockfile.
+     For an explicit selection, `check` diffs the frozen set against live existence
+     rather than re-running a filter (which would false-positive every repo as
+     removed). stdout is terse by default — the count is on
      stderr and the full list is in the lockfile; add --list to echo every repo's
      full name on stdout, or --json for the full wrapper. The stderr done line
      ends with "(digest <hash>)": a short repo-set fingerprint (12 hex chars /
@@ -159,8 +171,13 @@ WORKFLOW
      recognises (a version drift, or a run where every repo errored), the digest
      says so — "could not parse … per-repo status unavailable" — instead of
      guessing a per-repo verdict; read the full-output file in that case.
-     With --base-branch omitted, each PR targets that repo's own default branch,
-     so a mixed dev/main selection routes correctly per repo.
+     Base branch: with --base-branch OMITTED, goldfinger passes no base to
+     multi-gitter, which targets each repo's own LIVE default branch at run time —
+     so a selection mixing dev-default and main-default repos routes correctly in
+     one run, no per-repo config needed. Pass --base-branch only to FORCE a single
+     shared base across every repo (a repo lacking that branch then errors). The
+     dry-run banner prints the resolved base per repo so you can audit routing
+     before anything runs.
 
 SIGNING (--sign, REQUIRED — no default)
   Every apply must state how commits are signed. There is no default on purpose:

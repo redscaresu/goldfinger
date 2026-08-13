@@ -38,6 +38,16 @@ func newApplyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply [flags] -- command [args...]",
 		Short: "Run a change across the selection and open PRs via multi-gitter",
+		Long: "apply runs a change command in each selected repo and opens a PR per repo " +
+			"via multi-gitter. It defaults to a dry-run; a real run additionally requires " +
+			"--dry-run=false AND --confirm, and every run must state --sign.\n\n" +
+			"Base branch routing: omit --base-branch to let each PR target its repo's own " +
+			"default branch — goldfinger passes no base to multi-gitter, which resolves " +
+			"each repo's LIVE default at run time, so a selection mixing (say) dev-default " +
+			"and main-default repos routes correctly in one run. Pass --base-branch only to " +
+			"force a single shared base across every repo (a repo lacking that branch then " +
+			"errors). The dry-run banner prints the resolved base per repo so routing is " +
+			"auditable before anything runs.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			quiet := quietRequested(cmd)
 			errOut := humanErr(cmd)

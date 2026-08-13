@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -15,16 +17,22 @@ import (
 )
 
 type fakeResolver struct {
-	login     string
-	repos     []models.Repo
-	ownerType string
-	verifyErr error
-	listErr   error
+	login        string
+	repos        []models.Repo
+	ownerType    string
+	ownerTypeErr error
+	verifyErr    error
+	listErr      error
 
 	// Branch-presence support for `select --branch-presence`.
 	presentBranches map[string]bool // "owner/name@branch" -> exists
 	branchErr       error
 	branchCalls     *[]string // records each "owner/name@branch" probed
+
+	// Explicit-selection support for `select --repo`/`--repos-from`.
+	getRepos     map[string]models.Repo // basename -> repo; a missing key is a 404
+	getRepoErr   error                  // forced error for any GetRepo call
+	getRepoCalls *[]string              // records each "owner/name" looked up
 }
 
 func (f fakeResolver) Verify(context.Context) (string, error) {
@@ -33,6 +41,10 @@ func (f fakeResolver) Verify(context.Context) (string, error) {
 
 func (f fakeResolver) ListRepos(context.Context, string) ([]models.Repo, string, error) {
 	return f.repos, f.ownerType, f.listErr
+}
+
+func (f fakeResolver) OwnerType(context.Context, string) (string, error) {
+	return f.ownerType, f.ownerTypeErr
 }
 
 func (f fakeResolver) BranchExists(_ context.Context, owner, repo, branch string) (bool, error) {
@@ -44,6 +56,20 @@ func (f fakeResolver) BranchExists(_ context.Context, owner, repo, branch string
 		return false, f.branchErr
 	}
 	return f.presentBranches[key], nil
+}
+
+func (f fakeResolver) GetRepo(_ context.Context, owner, name string) (models.Repo, string, error) {
+	if f.getRepoCalls != nil {
+		*f.getRepoCalls = append(*f.getRepoCalls, owner+"/"+name)
+	}
+	if f.getRepoErr != nil {
+		return models.Repo{}, "", f.getRepoErr
+	}
+	repo, ok := f.getRepos[name]
+	if !ok {
+		return models.Repo{}, "", fmt.Errorf("repository %s/%s not found", owner, name)
+	}
+	return repo, f.ownerType, nil
 }
 
 func TestRunSelectWritesLockfile(t *testing.T) {
@@ -85,6 +111,187 @@ func TestRunSelectWritesLockfile(t *testing.T) {
 	assert.False(t, sel.ResolvedAt.IsZero())
 	require.Len(t, sel.Repos, 1)
 	assert.Equal(t, "redscaresu/platform-svc", sel.Repos[0].FullName())
+}
+
+func TestRunSelectExplicitRepos(t *testing.T) {
+	calls := []string{}
+	r := fakeResolver{
+		login:        "acme-bot",
+		ownerType:    models.OwnerOrganization,
+		getRepoCalls: &calls,
+		getRepos: map[string]models.Repo{
+			"svc-a": {Owner: "acme", Name: "svc-a", DefaultBranch: "main"},
+			// An archived repo is deliberately kept in an explicit selection.
+			"svc-b": {Owner: "acme", Name: "svc-b", DefaultBranch: "dev", Archived: true},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	var out, errOut bytes.Buffer
+
+	err := runSelect(context.Background(), r, selectOpts{
+		t:             targeting{org: "acme", repos: []string{"svc-a", "svc-b"}},
+		selectionPath: path,
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+	}, &out, &errOut)
+	require.NoError(t, err)
+
+	// Explicit mode resolves each named repo directly — never a full owner listing.
+	assert.Equal(t, []string{"acme/svc-a", "acme/svc-b"}, calls)
+
+	sel, err := selection.Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, models.OwnerOrganization, sel.OwnerType, "owner type comes from the per-repo GET")
+	// Filter.Repos is the explicit-mode marker; the filter fields stay zero.
+	assert.Equal(t, []string{"svc-a", "svc-b"}, sel.Filter.Repos)
+	assert.False(t, sel.Filter.AllRepos)
+	assert.Empty(t, sel.Filter.Topics)
+	require.Len(t, sel.Repos, 2)
+	assert.Equal(t, "acme/svc-a", sel.Repos[0].FullName())
+	assert.True(t, sel.Repos[1].Archived, "an explicitly named archived repo is included")
+}
+
+func TestRunSelectExplicitRepoNotFoundIsHardError(t *testing.T) {
+	r := fakeResolver{
+		login:     "acme-bot",
+		ownerType: models.OwnerOrganization,
+		getRepos: map[string]models.Repo{
+			"svc-a": {Owner: "acme", Name: "svc-a", DefaultBranch: "main"},
+			// "typo" is intentionally absent -> GetRepo returns not-found.
+		},
+	}
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	var out, errOut bytes.Buffer
+
+	err := runSelect(context.Background(), r, selectOpts{
+		t:             targeting{org: "acme", repos: []string{"svc-a", "typo"}},
+		selectionPath: path,
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+	}, &out, &errOut)
+	require.Error(t, err, "a named repo that 404s must fail loudly, not be dropped")
+	assert.Contains(t, err.Error(), "acme/typo")
+}
+
+func TestRunSelectExplicitEmptyObeysAllowEmpty(t *testing.T) {
+	// reposFrom is set (flipping explicit mode on) but repos resolved to none,
+	// e.g. an empty or all-comments --repos-from file.
+	newResolver := func() fakeResolver {
+		return fakeResolver{login: "acme-bot", ownerType: models.OwnerOrganization}
+	}
+	base := selectOpts{
+		t:             targeting{org: "acme", reposFrom: "repos.txt"},
+		tool:          "goldfinger test",
+		source:        tokenSourceEnv,
+	}
+
+	t.Run("empty explicit set is an error by default", func(t *testing.T) {
+		o := base
+		o.selectionPath = filepath.Join(t.TempDir(), "goldfinger.selection")
+		var out, errOut bytes.Buffer
+		err := runSelect(context.Background(), newResolver(), o, &out, &errOut)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--allow-empty")
+	})
+
+	t.Run("--allow-empty writes an empty explicit lockfile with a valid ownerType", func(t *testing.T) {
+		o := base
+		o.allowEmpty = true
+		o.selectionPath = filepath.Join(t.TempDir(), "goldfinger.selection")
+		var out, errOut bytes.Buffer
+		err := runSelect(context.Background(), newResolver(), o, &out, &errOut)
+		require.NoError(t, err)
+		sel, err := selection.Read(o.selectionPath)
+		require.NoError(t, err)
+		assert.Empty(t, sel.Repos)
+		// With no repo to read the type from, ownerType is probed directly so the
+		// lockfile stays schema-valid (ownerType is an enum, not "").
+		assert.Equal(t, models.OwnerOrganization, sel.OwnerType)
+	})
+}
+
+// TestRunSelectExplicitRejectsRedirectedRepo locks the single-owner invariant
+// against GitHub's rename/transfer redirect: GetRepo can return a repo under a
+// different owner or name than requested, and freezing that would make
+// Selection.Owner disagree with a repo's real owner. Such a mismatch is a hard
+// error, not a silent acceptance.
+func TestRunSelectExplicitRejectsRedirectedRepo(t *testing.T) {
+	run := func(t *testing.T, got models.Repo) error {
+		t.Helper()
+		r := fakeResolver{
+			login:     "acme-bot",
+			ownerType: models.OwnerOrganization,
+			getRepos:  map[string]models.Repo{"svc": got},
+		}
+		return runSelect(context.Background(), r, selectOpts{
+			t:             targeting{org: "acme", repos: []string{"svc"}},
+			selectionPath: filepath.Join(t.TempDir(), "goldfinger.selection"),
+			tool:          "goldfinger test",
+			source:        tokenSourceEnv,
+		}, &bytes.Buffer{}, &bytes.Buffer{})
+	}
+
+	t.Run("transfer to a different owner is rejected", func(t *testing.T) {
+		err := run(t, models.Repo{Owner: "other", Name: "svc", DefaultBranch: "main"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "other/svc")
+		assert.Contains(t, err.Error(), "renamed or transferred")
+	})
+
+	t.Run("rename to a different name is rejected", func(t *testing.T) {
+		err := run(t, models.Repo{Owner: "acme", Name: "svc-renamed", DefaultBranch: "main"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "acme/svc-renamed")
+	})
+
+	t.Run("a case-only difference is accepted (GitHub names are case-insensitive)", func(t *testing.T) {
+		err := run(t, models.Repo{Owner: "Acme", Name: "SVC", DefaultBranch: "main"})
+		require.NoError(t, err, "same repo in different casing is not a redirect")
+	})
+}
+
+func TestResolveTargetRepos(t *testing.T) {
+	t.Run("merges, normalises owner/name, and dedupes", func(t *testing.T) {
+		got, err := resolveTargetRepos(targeting{
+			org:   "acme",
+			repos: []string{"svc-a", "acme/svc-b", "svc-a"}, // owner-prefixed + duplicate
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"svc-a", "svc-b"}, got)
+	})
+
+	t.Run("a different owner is a hard error", func(t *testing.T) {
+		_, err := resolveTargetRepos(targeting{org: "acme", repos: []string{"other/svc"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "other")
+		assert.Contains(t, err.Error(), "--org")
+	})
+
+	t.Run("owner prefix matches --org case-insensitively", func(t *testing.T) {
+		got, err := resolveTargetRepos(targeting{org: "acme", repos: []string{"ACME/svc-a"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"svc-a"}, got, "GitHub owner logins are case-insensitive")
+	})
+
+	t.Run("case-only duplicate names collapse to first-seen", func(t *testing.T) {
+		got, err := resolveTargetRepos(targeting{org: "acme", repos: []string{"Svc", "svc", "acme/SVC"}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Svc"}, got, "one repo (GitHub names are case-insensitive), first casing kept")
+	})
+
+	t.Run("reads --repos-from, ignoring blanks and comments", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "repos.txt")
+		require.NoError(t, os.WriteFile(file, []byte("# a comment\nsvc-a\n\n  svc-b  \n# trailing\n"), 0o600))
+		got, err := resolveTargetRepos(targeting{org: "acme", reposFrom: file})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"svc-a", "svc-b"}, got)
+	})
+
+	t.Run("a missing --repos-from file errors", func(t *testing.T) {
+		_, err := resolveTargetRepos(targeting{org: "acme", reposFrom: filepath.Join(t.TempDir(), "nope.txt")})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "repos-from")
+	})
 }
 
 func TestRunSelectListEchoesNames(t *testing.T) {

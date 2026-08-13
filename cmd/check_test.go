@@ -93,6 +93,62 @@ func TestRunCheckJSON(t *testing.T) {
 	})
 }
 
+// explicitLockfile builds a two-repo explicit selection (Filter.Repos set), with
+// one archived member, the baseline the explicit-mode drift tests perturb.
+func explicitLockfile() models.Selection {
+	return models.Selection{
+		Version:   models.SelectionVersion,
+		Owner:     "acme",
+		OwnerType: models.OwnerOrganization,
+		Filter:    models.SelectionFilter{Repos: []string{"a", "b"}},
+		Repos: []models.Repo{
+			{Owner: "acme", Name: "a", DefaultBranch: "main"},
+			{Owner: "acme", Name: "b", DefaultBranch: "dev", Archived: true},
+		},
+	}
+}
+
+func TestComputeCheckResultExplicitSelection(t *testing.T) {
+	sel := explicitLockfile()
+
+	t.Run("named repos present stay in sync — no false add/remove, archived kept", func(t *testing.T) {
+		// raw includes an unrelated repo "z" the owner also has. A re-run filter with
+		// an empty filter would match nothing and report a AND b as removed (the bug);
+		// an explicit selection instead intersects the frozen set with live existence,
+		// so a and b stay in sync and z is never invented as added.
+		raw := []models.Repo{
+			{Owner: "acme", Name: "a", DefaultBranch: "main"},
+			{Owner: "acme", Name: "b", DefaultBranch: "dev", Archived: true},
+			{Owner: "acme", Name: "z", DefaultBranch: "main"},
+		}
+		res := computeCheckResult(sel, raw, models.OwnerOrganization)
+		assert.True(t, res.InSync, "explicit selection must not false-positive on a still-present set")
+		assert.True(t, res.Diff.Empty())
+	})
+
+	t.Run("a named repo that vanished is removed, and nothing is added", func(t *testing.T) {
+		raw := []models.Repo{
+			{Owner: "acme", Name: "a", DefaultBranch: "main"},
+			{Owner: "acme", Name: "z", DefaultBranch: "main"}, // unrelated
+		}
+		res := computeCheckResult(sel, raw, models.OwnerOrganization)
+		assert.False(t, res.InSync)
+		assert.Empty(t, res.Diff.Added, "an explicit selection never invents an added repo")
+		require.Len(t, res.Diff.Removed, 1)
+		assert.Equal(t, "acme/b", res.Diff.Removed[0].Repo.FullName())
+	})
+
+	t.Run("owner type flip on an explicit selection is drift", func(t *testing.T) {
+		raw := []models.Repo{
+			{Owner: "acme", Name: "a", DefaultBranch: "main"},
+			{Owner: "acme", Name: "b", DefaultBranch: "dev", Archived: true},
+		}
+		res := computeCheckResult(sel, raw, models.OwnerUser)
+		assert.False(t, res.InSync)
+		assert.True(t, res.OwnerTypeMoved)
+	})
+}
+
 func TestRunCheckReportsRepoDrift(t *testing.T) {
 	sel := lockfile()
 	// Live: "a" unchanged, "b" gone, "c" added.

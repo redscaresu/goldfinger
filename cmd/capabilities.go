@@ -87,7 +87,8 @@ var curatedCapabilities = map[string]curatedCommand{
 		requiredFlags: []string{"--org"},
 		example:       "goldfinger select --org myorg --topic platform",
 		notes: []string{
-			"exactly one of --all-repos or --topic is required (they are mutually exclusive)",
+			"exactly one selection mode is required and they are mutually exclusive: --all-repos, --topic (repeatable), or an explicit set via --repo (repeatable) / --repos-from <file>",
+			"--repo/--repos-from name repos by bare basename under --org (single-owner); a named repo that 404s is a hard error, and archived repos are included (a filter would skip them)",
 			"--branch-presence <b> records, read-only, which repos have branch <b> so a later `mirror --branch <b>` can report fall-backs",
 			"stdout is terse by default: the repo count is on stderr and the full list is in the lockfile; pass --list to echo every selected repo's full name on stdout, or --json for the full wrapper",
 			nameSelectionExclusiveNote,

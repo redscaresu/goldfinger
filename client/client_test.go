@@ -149,6 +149,77 @@ func TestBranchExists(t *testing.T) {
 	})
 }
 
+func TestGetRepo(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/svc", func(w http.ResponseWriter, r *http.Request) {
+		// Owner object carries the type, which GetRepo reads back as the ownerType.
+		fmt.Fprint(w, `{"name":"svc","owner":{"login":"acme","type":"Organization"},"clone_url":"https://github.com/acme/svc.git","default_branch":"dev","topics":["platform"],"archived":true}`)
+	})
+	mux.HandleFunc("/repos/acme/ghost", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	c := newTestClient(t, mux)
+
+	t.Run("resolves repo and owner type, keeps archived", func(t *testing.T) {
+		repo, ownerType, err := c.GetRepo(context.Background(), "acme", "svc")
+		require.NoError(t, err)
+		assert.Equal(t, models.OwnerOrganization, ownerType)
+		assert.Equal(t, "acme/svc", repo.FullName())
+		assert.Equal(t, "dev", repo.DefaultBranch)
+		assert.Equal(t, "https://github.com/acme/svc.git", repo.CloneURL)
+		assert.Equal(t, []string{"platform"}, repo.Topics)
+		assert.True(t, repo.Archived, "an explicitly named archived repo is kept, not dropped")
+	})
+
+	t.Run("404 is a clear hard error", func(t *testing.T) {
+		_, _, err := c.GetRepo(context.Background(), "acme", "ghost")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "acme/ghost")
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestOwnerType(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"me"}`)
+	})
+	mux.HandleFunc("/users/acme", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"acme","type":"Organization"}`)
+	})
+	mux.HandleFunc("/users/bob", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"bob","type":"User"}`)
+	})
+	mux.HandleFunc("/users/ghost", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	c := newTestClient(t, mux)
+
+	t.Run("organization owner", func(t *testing.T) {
+		ot, err := c.OwnerType(context.Background(), "acme")
+		require.NoError(t, err)
+		assert.Equal(t, models.OwnerOrganization, ot)
+	})
+
+	t.Run("user owner", func(t *testing.T) {
+		ot, err := c.OwnerType(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Equal(t, models.OwnerUser, ot)
+	})
+
+	t.Run("the authenticated identity is a user without a lookup", func(t *testing.T) {
+		ot, err := c.OwnerType(context.Background(), "me")
+		require.NoError(t, err)
+		assert.Equal(t, models.OwnerUser, ot)
+	})
+
+	t.Run("a missing owner errors", func(t *testing.T) {
+		_, err := c.OwnerType(context.Background(), "ghost")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ghost")
+	})
+}
+
 func TestListReposPropagatesError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/ghost", func(w http.ResponseWriter, r *http.Request) {

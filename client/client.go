@@ -74,11 +74,11 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, st
 		return repos, models.OwnerUser, err
 	}
 
-	u, _, err := c.gh.Users.Get(ctx, owner)
+	ownerType, err := c.OwnerType(ctx, owner)
 	if err != nil {
-		return nil, "", fmt.Errorf("look up owner %q: %w", owner, err)
+		return nil, "", err
 	}
-	if u.GetType() == models.OwnerOrganization {
+	if ownerType == models.OwnerOrganization {
 		repos, err := c.paginate(func(page int) ([]*github.Repository, *github.Response, error) {
 			return c.gh.Repositories.ListByOrg(ctx, owner, &github.RepositoryListByOrgOptions{
 				ListOptions: github.ListOptions{Page: page, PerPage: perPage},
@@ -92,6 +92,51 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, st
 		})
 	})
 	return repos, models.OwnerUser, err
+}
+
+// OwnerType resolves whether owner is a "User" or an "Organization" via a
+// read-only lookup, without listing any repositories. select uses it to stamp a
+// valid ownerType on an explicit selection (`--repo`/`--repos-from`) that
+// resolved to zero repos under --allow-empty — there is no repo to read the type
+// from, so an empty explicit lockfile would otherwise carry an empty (schema-
+// invalid) ownerType, unlike an empty filtered one. The authenticated identity
+// is always a User. It mutates nothing.
+func (c *Client) OwnerType(ctx context.Context, owner string) (string, error) {
+	if err := c.ensureLogin(ctx); err != nil {
+		return "", err
+	}
+	if owner == c.login {
+		return models.OwnerUser, nil
+	}
+	u, _, err := c.gh.Users.Get(ctx, owner)
+	if err != nil {
+		return "", fmt.Errorf("look up owner %q: %w", owner, err)
+	}
+	if u.GetType() == models.OwnerOrganization {
+		return models.OwnerOrganization, nil
+	}
+	return models.OwnerUser, nil
+}
+
+// GetRepo resolves a single repository by owner/name via a read-only GET — the
+// per-repo lookup an EXPLICIT selection (`select --repo` / `--repos-from`) needs,
+// where the operator names the set instead of resolving a filter. It returns the
+// mapped repo and the owner's type ("User" | "Organization"), taken from the
+// repo's own owner object so an explicit selection records the same ownerType a
+// filtered one would (mirror passes it to ghorg as --clone-type). A 404 (missing,
+// renamed, or not visible to this token) is a clear hard error: a repo the
+// operator named explicitly must fail loudly, never be silently dropped. Archived
+// repos resolve normally — dropping them is discovery.Select's job, and an
+// explicit selection deliberately keeps them. It mutates nothing.
+func (c *Client) GetRepo(ctx context.Context, owner, name string) (models.Repo, string, error) {
+	r, resp, err := c.gh.Repositories.Get(ctx, owner, name)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return models.Repo{}, "", fmt.Errorf("repository %s/%s not found (deleted, renamed, or not visible to this token) — check the name under --org", owner, name)
+		}
+		return models.Repo{}, "", fmt.Errorf("look up repo %s/%s: %w", owner, name, err)
+	}
+	return toRepo(r), r.GetOwner().GetType(), nil
 }
 
 // BranchExists reports whether branch exists on owner/repo, via a read-only

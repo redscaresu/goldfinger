@@ -179,6 +179,7 @@ func filterSchemaObj() map[string]any {
 	return object(map[string]any{
 		"allRepos": boolean(),
 		"topics":   arrayOf(str()),
+		"repos":    arrayOf(str()),
 	}, "allRepos")
 }
 
