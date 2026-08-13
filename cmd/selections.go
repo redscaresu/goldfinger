@@ -103,6 +103,16 @@ func renderSelectionsTable(out, errOut io.Writer, names []string) error {
 // and PathForName failures surface as that entry's error too rather than aborting
 // the whole listing — an agent still gets every name.
 func emitSelectionsJSON(out io.Writer, names []string, quiet bool) error {
+	return emitJSON(out, buildSelectionsReport(names), quiet)
+}
+
+// buildSelectionsReport assembles the versioned registry payload from the list of
+// names. It is pure of output — no writer — so the CLI (emitSelectionsJSON) and
+// the MCP `selections` tool emit an identical report from the same builder. An
+// unreadable entry is kept with an `error` field (mirroring the tolerant table),
+// and PathForName failures surface as that entry's error too rather than aborting
+// the whole listing.
+func buildSelectionsReport(names []string) selectionsReport {
 	rep := selectionsReport{
 		Version:    selectionsReportVersion,
 		Selections: make([]selectionEntryJSON, 0, len(names)),
@@ -129,5 +139,5 @@ func emitSelectionsJSON(out io.Writer, names []string, quiet bool) error {
 		entry.ResolvedAt = sel.ResolvedAt.Format(time.RFC3339)
 		rep.Selections = append(rep.Selections, entry)
 	}
-	return emitJSON(out, rep, quiet)
+	return rep
 }

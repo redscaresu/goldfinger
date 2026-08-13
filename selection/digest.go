@@ -23,6 +23,19 @@ const digestHashLen = 12
 // it answers exactly the question WS6 poses: "same N repos?". An agent can
 // compare two digests to confirm a selection is unchanged without reading the
 // whole lockfile back.
+// SelectionBytesDigest is the full sha256, hex-encoded, of the exact bytes of a
+// lockfile. Unlike Digest — a short fingerprint of the repo SET, meant for a
+// human glance — this commits to the whole file content (every field, exact
+// formatting), so it is the file's identity, not a semantic summary. It backs
+// `apply --expect-selection-sha256 <hex>`: bind a real run to the precise
+// lockfile a plan was reviewed against, and refuse if anything changed. Callers
+// should feed it the same buffer they parsed (see ReadWithDigest) so the digest
+// and the parsed selection cannot describe different content.
+func SelectionBytesDigest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func Digest(sel models.Selection) (count int, hash string) {
 	names := make([]string, len(sel.Repos))
 	for i, r := range sel.Repos {

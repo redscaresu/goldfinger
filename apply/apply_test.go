@@ -178,6 +178,51 @@ func TestApplyAllowsConfirmedSignedLiveRun(t *testing.T) {
 	assert.Contains(t, cap.args, "--git-type=cmd")
 }
 
+// TestApplyRefusesConfirmedLiveRunWithInvalidSign closes the gap the two guards
+// leave individually: a run that CLEARS the confirm guard (DryRun=false,
+// Confirm=true) but names no valid signing mode must still be refused — by the
+// sign guard (b), unconditionally, before writeScript or any exec. The other
+// sign-mode test runs on a dry-run; this proves guard (b) is not skipped once a
+// live run has satisfied guard (a), so a confirmed-but-unsigned-mode MCP/direct
+// caller cannot slip an empty or bogus mode through to multi-gitter's own
+// (silently unsigned) default. failRunner asserts multi-gitter is never invoked.
+func TestApplyRefusesConfirmedLiveRunWithInvalidSign(t *testing.T) {
+	securityTest(t)
+	for _, mode := range []string{"", "bogus"} {
+		name := mode
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			spec := baseSpec()
+			spec.DryRun = false
+			spec.Confirm = true // clears guard (a); guard (b) must still fire
+			spec.Sign = mode
+			_, err := Apply(context.Background(), failRunner(t), twoRepoSelection(), spec, "t")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "signing mode")
+		})
+	}
+}
+
+// TestApplyAllowsConfirmedLiveRunSignNone documents an intentional-by-design
+// path so no one later "hardens" it into a refusal: SignNone ("none") is a valid,
+// explicit signing mode (unsigned commits), so a confirmed live run with it is
+// PERMITTED and delegates normally, adding no signing flag. "Unsigned live" is a
+// legitimate operator choice; only an empty/unrecognised mode is refused (above).
+func TestApplyAllowsConfirmedLiveRunSignNone(t *testing.T) {
+	var cap capture
+	spec := baseSpec()
+	spec.DryRun = false
+	spec.Confirm = true
+	spec.Sign = models.SignNone
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "t")
+	require.NoError(t, err)
+	assert.Equal(t, "multi-gitter", cap.name)
+	assert.NotContains(t, cap.args, "--git-type=cmd")
+	assert.NotContains(t, cap.args, "--api-push")
+}
+
 func TestApplyEmptySelection(t *testing.T) {
 	_, err := Apply(context.Background(), failRunner(t), models.Selection{Owner: "x"}, baseSpec(), "t")
 	require.Error(t, err)

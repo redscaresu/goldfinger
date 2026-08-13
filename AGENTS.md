@@ -55,6 +55,16 @@ it does not reimplement mirroring or PR-fanout.
   branch never checked reports `unknown` — do not add code that guesses it.
 - Tokens go to child tools via their env vars (`GHORG_GITHUB_TOKEN`,
   `GITHUB_TOKEN`), never argv. Tests assert no token appears in argv.
+- `goldfinger mcp` (cmd/mcp.go) serves goldfinger's **read-and-plan** surface over
+  MCP on stdio as thin adapters over the existing report cores (no logic of its
+  own). It must stay read-and-plan: there is deliberately **no `apply` tool** —
+  `apply_plan` returns the digest-bound `apply` command for a human to run, and
+  `apply_plan` must never call `apply.Apply` (a negative test asserts it succeeds
+  fully offline, with no token and no child tool). Do not add a tool that opens
+  PRs or runs `git`. The StdioTransport owns the process's real stdin/stdout as
+  the JSON-RPC channel, so no tool may write to them: delegate output is captured
+  and token-redacted, never streamed. The go-sdk MCP dep was maintainer-approved
+  for this (issue #58).
 - The machine surfaces are self-describing and must stay honest: `guide --json`
   is the input catalogue (kept in sync with the validators by tests) and
   `goldfinger schema` is the output contract — hand-authored JSON Schema for the

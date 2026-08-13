@@ -140,6 +140,15 @@ var curatedCapabilities = map[string]curatedCommand{
 		example: "goldfinger schema",
 		notes:   []string{"prints JSON Schema for the lockfile and every machine-readable payload; read-only and offline, needs no token, opens no network, runs no git"},
 	},
+	"mcp": {
+		example: "goldfinger mcp",
+		notes: []string{
+			"serves goldfinger's read-and-plan surface to an AI agent over MCP (Model Context Protocol) on stdio; stdin/stdout are the JSON-RPC channel — do not pipe anything else into them",
+			"exposes tools guide, schema, selections, check, select, mirror, workspaces_list, doctor, and apply_plan",
+			"apply is deliberately NOT a tool: opening PRs is the human's to run; apply_plan instead returns the exact, digest-bound `goldfinger apply` command (dry-run and live variants) for a human to review and execute",
+			"the server never opens PRs and never runs git",
+		},
+	},
 	"workspaces": {
 		example: "goldfinger workspaces list",
 		notes: []string{

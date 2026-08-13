@@ -39,7 +39,7 @@ func writeSelection(t *testing.T) string {
 		Owner:     "acme",
 		OwnerType: models.OwnerUser,
 		Repos:     []models.Repo{{Owner: "acme", Name: "a"}},
-	}))
+	}, selection.WriteOptions{Overwrite: true}))
 	return path
 }
 

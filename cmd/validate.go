@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/redscaresu/goldfinger/models"
 )
@@ -67,6 +68,28 @@ func validateApply(av applyValidation) error {
 		return errors.New("a script command is required after --")
 	}
 	return nil
+}
+
+// validateExpectSelectionDigest checks the optional --expect-selection-sha256
+// value. Empty means "no expectation" and passes untouched. A non-empty value
+// must be a full 64-character hex sha256 (any case); it is returned normalised
+// to lowercase so the later comparison against selection.SelectionBytesDigest
+// (which emits lowercase) is case-insensitive. This is a pure format check — the
+// actual match happens after the lockfile is read.
+func validateExpectSelectionDigest(v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	if len(v) != 64 {
+		return "", fmt.Errorf("--expect-selection-sha256 must be a 64-character hex sha256, got %d characters", len(v))
+	}
+	lower := strings.ToLower(v)
+	for _, c := range lower {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", errors.New("--expect-selection-sha256 must be hexadecimal (0-9a-f)")
+		}
+	}
+	return lower, nil
 }
 
 // validSignModes is the accepted --sign values, a copy of the canonical set

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,6 +86,34 @@ func TestValidateMirror(t *testing.T) {
 			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestValidateExpectSelectionDigest(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr string
+	}{
+		{name: "empty passes as no-check", in: "", want: ""},
+		{name: "lowercase 64-hex passes", in: strings.Repeat("a", 64), want: strings.Repeat("a", 64)},
+		{name: "uppercase normalises to lowercase", in: strings.Repeat("A", 64), want: strings.Repeat("a", 64)},
+		{name: "too short", in: strings.Repeat("a", 63), wantErr: "64-character"},
+		{name: "too long", in: strings.Repeat("a", 65), wantErr: "64-character"},
+		{name: "non-hex char", in: strings.Repeat("g", 64), wantErr: "hexadecimal"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := validateExpectSelectionDigest(tt.in)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

@@ -854,6 +854,61 @@ that travels with the binary. The selection lockfile is JSON, and every error
 names the next action — so an agent can self-orient and recover without this
 README. Contributor-agent rules live in `AGENTS.md` and `CLAUDE.md`.
 
+### MCP server (`goldfinger mcp`)
+
+`goldfinger mcp` serves goldfinger's **read-and-plan** surface to an agent over
+the [Model Context Protocol](https://modelcontextprotocol.io) on stdio, so a host
+that speaks MCP can call goldfinger as typed tools instead of shelling out and
+parsing text. Point your MCP client at the command `goldfinger mcp` (no args);
+stdin/stdout are the JSON-RPC channel, so don't pipe anything else into them.
+
+Register it with your client. Most hosts (Claude Desktop, Cursor, and others)
+take a `mcpServers` block in their config file — add goldfinger as a stdio
+server, and pass a GitHub token through `env` for the tools that reach GitHub
+(`doctor`, `check`, `select`, `mirror`); the offline tools need none:
+
+```json
+{
+  "mcpServers": {
+    "goldfinger": {
+      "command": "goldfinger",
+      "args": ["mcp"],
+      "env": { "GITHUB_TOKEN": "ghp_your_token_here" }
+    }
+  }
+}
+```
+
+Claude Code registers the same server from the CLI (it inherits your shell's
+`GITHUB_TOKEN`, so pass `--env` only to override it):
+
+```sh
+claude mcp add goldfinger goldfinger mcp
+```
+
+The tools mirror the CLI's machine surface one-for-one, and each returns the same
+structured payload the corresponding `--json` command emits:
+
+| Tool | Reaches | What it does |
+| --- | --- | --- |
+| `guide` | offline | the capabilities catalogue (`guide --json`) |
+| `schema` | offline | the JSON Schema output contract (`goldfinger schema`) |
+| `selections` | offline | list named selections in the registry |
+| `workspaces_list` | disk | list mirror snapshot workspaces (never prunes) |
+| `doctor` | GitHub (read) | preflight: token source, principal, tools on PATH, signing |
+| `check` | GitHub (read) | report selection drift vs. live discovery |
+| `select` | GitHub (read) + disk | resolve repos and freeze the lockfile |
+| `mirror` | GitHub (read) + disk | clone a frozen selection locally via ghorg |
+| `apply_plan` | offline | **plan** a fleet change and return the digest-bound `apply` command |
+
+**`apply` is deliberately not a tool.** A real apply opens PRs, and the charter
+keeps that a human action. `apply_plan` instead returns the exact, digest-bound
+`goldfinger apply` command — a dry-run variant and a live variant — for a human to
+review and run. Both pin the precise lockfile via `--expect-selection-sha256`, so
+the command a human executes is provably the selection the plan was built from.
+The server never opens PRs and never runs `git`. Tokens go to child tools (ghorg)
+via their env var, never argv, and are redacted from any captured output.
+
 **Tell your own agents about it.** The way a tool becomes reachable to the agents
 working in *your* repos is a line in their instructions file. Drop this into your
 repo's `AGENTS.md` (read by Claude Code, Cursor, Codex, and others — or its
