@@ -66,6 +66,35 @@ func mcpDelegate(ctx context.Context, name string, args, env []string, token str
 	return mcpRun(ctx, name, args, env, token)
 }
 
+// mcpProbe runs a short helper command and returns ONLY its stdout, bounded, with
+// the same stdio-safety lifecycle guards as mcpRun (no stdin, own process group
+// killed as a whole on context-cancel, bounded Wait). It exists for the preflight
+// probes — a tool `version` line, `gh auth token` — that goldfinger runs even
+// while serving MCP, where a raw exec.Command().Output() would be unsafe: the
+// context kills only the direct child, so a spawned helper/grandchild holding the
+// output pipe open could wedge the long-lived server, and unbounded output could
+// balloon its memory.
+//
+// Unlike mcpRun it does NOT fold in stderr: these callers parse stdout exactly (a
+// version string, a token), and stderr noise (a gh update notice, a deprecation
+// warning) must not corrupt that value — stderr goes to the null device. There is
+// no token redaction: the probe env is either scrubbed of secrets (doctor) or the
+// stdout IS the secret the caller needs verbatim (gh auth token), so the caller,
+// not this runner, owns never logging it. env scopes the child's environment
+// (nil = inherit the parent's).
+func mcpProbe(ctx context.Context, name string, args, env []string) ([]byte, error) {
+	c := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: a fixed subcommand on a PATH-resolved tool (ghorg/multi-gitter/gh), not external input — same controlled seam as mcpRun.
+	c.Env = env
+	c.Stdin = nil
+	buf := &boundedBuffer{limit: maxCapturedOutput}
+	c.Stdout = buf
+	c.Stderr = nil // discard stderr to the null device: only stdout is parsed, and stderr noise must not corrupt it.
+	setProcessGroup(c)
+	c.WaitDelay = killGraceDelay
+	err := c.Run()
+	return buf.Bytes(), err
+}
+
 // redactToken masks every occurrence of the token in b, so captured delegate
 // output returned to an MCP caller can never leak the PAT even if a child echoes
 // it (an error dumping its environment, a token-in-URL clone failure). A no-op

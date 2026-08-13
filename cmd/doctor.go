@@ -443,9 +443,11 @@ func probeToolDefault(ctx context.Context, name string) (path, version string, o
 func probeToolVersion(ctx context.Context, path string) string {
 	ctx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, path, "version")
-	c.Env = scrubTokenEnv(os.Environ())
-	out, err := c.Output()
+	// Route through the stdio-safe bounded runner so this probe is safe even while
+	// goldfinger serves MCP (doctor is an MCP tool): a wedged or chatty `version`
+	// child cannot hang the server or balloon its memory. The env is scrubbed of
+	// every token var, so a rogue PATH binary receives no credential to echo.
+	out, err := mcpProbe(ctx, path, []string{"version"}, scrubTokenEnv(os.Environ()))
 	if err != nil {
 		return ""
 	}

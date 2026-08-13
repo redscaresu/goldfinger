@@ -119,7 +119,15 @@ func ghAuthToken(ctx context.Context) (string, bool) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, ghAuthTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+	// Route through the stdio-safe bounded runner: resolveToken (and thus this
+	// fallback) runs even while goldfinger serves MCP, where a raw
+	// exec.Command().Output() is unsafe — the timeout kills only the direct `gh`
+	// process, so a spawned gh helper/grandchild holding stdout open could wedge
+	// the long-lived server. mcpProbe kills the whole process group on cancel,
+	// bounds Wait, and captures stdout only so a gh stderr notice can't corrupt the
+	// token. The token IS this stdout, so it is deliberately not redacted — callers
+	// must never log it.
+	out, err := mcpProbe(ctx, "gh", []string{"auth", "token"}, nil)
 	if err != nil {
 		return "", false
 	}
