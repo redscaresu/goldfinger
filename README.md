@@ -5,6 +5,9 @@
 [![zizmor](https://github.com/redscaresu/goldfinger/actions/workflows/zizmor.yml/badge.svg)](https://github.com/redscaresu/goldfinger/actions/workflows/zizmor.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/redscaresu/goldfinger/badge)](https://scorecard.dev/viewer/?uri=github.com/redscaresu/goldfinger)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13997/badge)](https://www.bestpractices.dev/projects/13997)
+[![SLSA 3](https://img.shields.io/badge/SLSA-Level_3-green)](https://slsa.dev/spec/v1.0/levels#build-l3)
+[![Release](https://img.shields.io/github/v/release/redscaresu/goldfinger)](https://github.com/redscaresu/goldfinger/releases/latest)
+[![License](https://img.shields.io/github/license/redscaresu/goldfinger)](LICENSE)
 
 An orchestration layer for fleet-wide GitHub work. goldfinger resolves a set of
 repos once — by org/user and topic — freezes it as a reviewable **selection**,
