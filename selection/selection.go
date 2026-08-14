@@ -7,11 +7,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/redscaresu/goldfinger/models"
 )
+
+// segmentPattern is the grammar a lockfile owner or repo name must match to be a
+// safe single path segment: GitHub logins and repo names are ASCII alphanumerics
+// plus '.', '_', '-', so this both matches every real name and rejects anything
+// with a path separator, NUL, or — crucially — a newline/tab/space or other
+// control character. A control char matters beyond path-joining: a name like
+// "a\nb" would split ghorg's line-oriented names file into two targets, so the
+// set mirror clones would differ from the set scan/apply act on, silently
+// breaking the provable-same-set guarantee.
+var segmentPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // nameExt is the file extension for named selections in the registry.
 const nameExt = ".json"
@@ -161,7 +172,62 @@ func parseSelection(data []byte, path string) (models.Selection, error) {
 	default:
 		return models.Selection{}, fmt.Errorf("selection %s has unsupported version %d (this goldfinger understands versions 1..%d)", path, s.Version, models.SelectionVersion)
 	}
+	// The owner and every repo name are used as path segments when a consumer
+	// joins a clone location (<workspace>/<owner>/<name> in mirror and scan). A
+	// hand-edited or hostile lockfile with a name like "../other" would let those
+	// reads escape the workspace, breaking the provable-same-set guarantee. Reject
+	// any segment that is not a single, contained path element at this one read
+	// boundary, so no downstream Join can traverse out. Real GitHub logins/repo
+	// names are always clean, so this rejects only a tampered lockfile. Owner
+	// checks apply only to a populated selection — a zero-repo lockfile locates
+	// nothing, so its owner is never joined into a path.
+	if len(s.Repos) > 0 {
+		if !isPathSegment(s.Owner) {
+			return models.Selection{}, fmt.Errorf("selection %s has an unsafe or empty owner %q: must be a single path segment", path, s.Owner)
+		}
+		// A repo identity must appear at most once. A duplicate — the same name twice,
+		// or two spellings that collide case-insensitively (svc/Svc) — resolves to ONE
+		// clone dir <workspace>/<owner>/<name>, so mirror/scan/apply would act on it
+		// twice: the coverage counts inflate and apply could open two PRs against one
+		// repo. GitHub treats owner logins and repo names case-insensitively for
+		// uniqueness, and a case-insensitive filesystem (macOS default) maps both
+		// spellings to one dir, so fold to lower case before comparing.
+		seen := make(map[string]struct{}, len(s.Repos))
+		for _, r := range s.Repos {
+			// Single-owner model: every repo belongs to the selection owner. If a
+			// repo's owner diverged, mirror and scan (which locate clones under
+			// <workspace>/Selection.Owner) and apply (which targets repo.FullName())
+			// would act on DIFFERENT repos — the provable-same-set guarantee would
+			// silently break. Require agreement, case-insensitively as GitHub treats
+			// owner logins. This also makes r.Owner transitively a safe path segment,
+			// since it must equal the already-validated Selection.Owner.
+			if !strings.EqualFold(r.Owner, s.Owner) {
+				return models.Selection{}, fmt.Errorf("selection %s has repo %q with owner %q that does not match the selection owner %q (single-owner model)", path, r.Name, r.Owner, s.Owner)
+			}
+			if !isPathSegment(r.Name) {
+				return models.Selection{}, fmt.Errorf("selection %s has a repo with an unsafe name %q: must be a single path segment", path, r.Name)
+			}
+			key := strings.ToLower(r.Name)
+			if _, dup := seen[key]; dup {
+				return models.Selection{}, fmt.Errorf("selection %s lists repo %q more than once (case-insensitively): a duplicate resolves to one clone and would be mirrored/scanned/applied twice", path, r.Name)
+			}
+			seen[key] = struct{}{}
+		}
+	}
 	return s, nil
+}
+
+// isPathSegment reports whether s is safe to use as ONE path segment when joining
+// a repo's clone location — it must match segmentPattern (GitHub-ish ASCII, so no
+// separator, NUL, newline, or other control/whitespace char), not be "."/"..",
+// and be local (filepath.IsLocal rejects absolute paths, ".." traversal, and
+// OS-reserved names). segmentPattern already excludes "/" and "\", so this is the
+// containment guard that keeps <workspace>/<owner>/<name> joins from escaping the
+// workspace AND keeps a name from injecting into a line-oriented downstream tool.
+func isPathSegment(s string) bool {
+	return s != "." && s != ".." &&
+		segmentPattern.MatchString(s) &&
+		filepath.IsLocal(s)
 }
 
 // Dir is the directory holding named selections. It honours XDG_CONFIG_HOME,

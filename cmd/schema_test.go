@@ -119,6 +119,9 @@ func TestSchemasMatchTheirStructs(t *testing.T) {
 		{"mirrorReconciliation", reflect.TypeOf(mirrorReconciliation{}), mirrorReconciliationSchemaObj()},
 		{"mirrorBranchReconciliation", reflect.TypeOf(mirrorBranchReconciliation{}), mirrorBranchReconciliationSchemaObj()},
 		{"mirrorRepoInfo", reflect.TypeOf(mirrorRepoInfo{}), mirrorRepoInfoSchemaObj()},
+		{"scanReport", reflect.TypeOf(scanReport{}), scanReportSchemaObj()},
+		{"scanRepoResult", reflect.TypeOf(scanRepoResult{}), scanRepoResultSchemaObj()},
+		{"scanMatch", reflect.TypeOf(scanMatch{}), scanMatchSchemaObj()},
 		{"capabilities", reflect.TypeOf(capabilities{}), capabilitiesSchemaObj()},
 		{"commandCapability", reflect.TypeOf(commandCapability{}), commandCapSchemaObj()},
 		{"flagCapability", reflect.TypeOf(flagCapability{}), flagCapSchemaObj()},
@@ -226,6 +229,16 @@ func TestSampleOutputValidatesAgainstSchema(t *testing.T) {
 				Branch: &mirrorBranchReconciliation{Present: 1, FellBack: 0, Unknown: 0},
 			},
 			Repos: []mirrorRepoInfo{{Repo: "acme/a", DefaultBranch: "main", BranchStatus: branchStatusHas}},
+		},
+		"scan": scanReport{
+			Version: scanReportVersion, Pattern: "debian:bullseye",
+			IgnoreCase: false, FixedStrings: true, Workspace: "/ws", Owner: "acme",
+			Branch: "dev", ReposInSelection: 2, ReposScanned: 1, ReposWithMatches: 1,
+			ReposNotScanned: 1, TotalMatches: 1, Truncated: false,
+			Repos: []scanRepoResult{
+				{Repo: "acme/a", Scanned: true, Matches: []scanMatch{{Path: "Dockerfile", Line: 3, Text: "FROM debian:bullseye"}}},
+				{Repo: "acme/b", Scanned: false, SkipReason: skipReasonNotMirrored, Matches: []scanMatch{}},
+			},
 		},
 		"capabilities": buildCapabilities(newRootCmd()),
 		"workspaces": workspacesReport{
@@ -437,7 +450,7 @@ func TestEveryJSONEmittingCommandHasASchema(t *testing.T) {
 	surfaceKey := map[string]string{
 		"select": "select", "check": "check", "selections": "selections",
 		"doctor": "doctor", "mirror": "mirror-report", "apply": "apply-plan",
-		"guide": "capabilities", "workspaces": "workspaces",
+		"scan": "scan", "guide": "capabilities", "workspaces": "workspaces",
 	}
 	cat := buildSchemaCatalogue()
 	claimedBy := map[string]int{}

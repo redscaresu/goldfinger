@@ -80,6 +80,45 @@ func TestReconcileAcceptsGitfileWorktree(t *testing.T) {
 	assert.Equal(t, 0, rec.shortfall())
 }
 
+func TestReconcileRejectsASymlinkedRepoRoot(t *testing.T) {
+	// A symlink at the repo's clone location — even one pointing at a real git tree —
+	// must NOT count as covered: ghorg never creates one, so it can only come from
+	// tampering or an unrelated symlink a repo name happens to match, and counting it
+	// would let reconcile (and scan, which gates on the same helper) claim coverage of
+	// a tree they never walked through the workspace. isRealDir uses Lstat, so the
+	// symlink root is rejected.
+	ws := t.TempDir()
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a"}}}
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "acme"), 0o755))
+	// A genuine clone elsewhere, then a symlink at the repo path pointing to it.
+	realClone := filepath.Join(t.TempDir(), "realclone")
+	require.NoError(t, os.MkdirAll(filepath.Join(realClone, ".git"), 0o755))
+	require.NoError(t, os.Symlink(realClone, filepath.Join(ws, "acme", "a")))
+
+	rec := reconcile(sel, ws, mirror.Options{})
+	assert.Equal(t, 0, rec.onDisk, "a symlinked repo root is not an in-workspace clone and must not count")
+	assert.Equal(t, 1, rec.shortfall())
+}
+
+func TestReconcileRejectsASymlinkedGitEntry(t *testing.T) {
+	// A real dir whose .git is a SYMLINK to some other git tree must not count: ghorg
+	// never makes a .git symlink, so following it (os.Stat would) could count an
+	// unrelated tree as this repo's clone. isGitClone Lstats .git and rejects the
+	// symlink — a directory or a regular gitfile still count (proven by the tests
+	// above).
+	ws := t.TempDir()
+	sel := models.Selection{Owner: "acme", Repos: []models.Repo{{Owner: "acme", Name: "a"}}}
+	repo := filepath.Join(ws, "acme", "a")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	realGit := filepath.Join(t.TempDir(), "elsewhere-git")
+	require.NoError(t, os.MkdirAll(realGit, 0o755))
+	require.NoError(t, os.Symlink(realGit, filepath.Join(repo, ".git")))
+
+	rec := reconcile(sel, ws, mirror.Options{})
+	assert.Equal(t, 0, rec.onDisk, "a .git symlink is not a ghorg clone and must not count")
+	assert.Equal(t, 1, rec.shortfall())
+}
+
 func TestReconcileBranchTallies(t *testing.T) {
 	ws := t.TempDir()
 	sel := models.Selection{

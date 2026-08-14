@@ -519,6 +519,41 @@ to refresh) and never re-runs discovery inside `mirror`/`apply`, so that
 guarantee is preserved. Exit status makes it usable as a CI gate: `0` in sync,
 `1` drift found, `2` error.
 
+### `goldfinger scan`
+
+`scan` is the read counterpart to `apply`'s write path. Where `apply` fans a
+change across the selection, `scan` fans a **read-only search** across it —
+answering "which of these repos ships `debian:bullseye`?" or "does any pin a
+poisoned `name@version`?" before you decide what to change. It searches the
+clones `mirror` already put on disk, so **mirror first**:
+
+```sh
+goldfinger mirror                       # clone the selection
+goldfinger scan "debian:bullseye"       # regex search, human summary
+goldfinger scan --json "name@1\.2\.3"   # JSON match report on stdout
+```
+
+The point is that it reads through the **local mirror, not the API** — the same
+reason `mirror` exists. So a scan runs **no git and makes no network call**: it
+needs no token and burns **zero** GitHub rate limit, however large the fleet or
+however many patterns you sweep. The pattern is an [RE2](https://github.com/google/re2/wiki/Syntax)
+regular expression by default (linear-time, no catastrophic backtracking, safe
+over minified lines); `-F`/`--fixed-strings` searches for a literal and
+`-i`/`--ignore-case` folds case.
+
+It carries the **provable-same-set** guarantee onto the read path: `scan`
+searches exactly the lockfile's repos and no other directory on disk (a repo
+cloned into the workspace but absent from the selection is never read). A
+selected repo *missing* from the workspace is reported `scanned: false` with a
+skip reason and counted in `reposNotScanned` — a coverage gap is surfaced, never
+silently dropped. Binary files (NUL byte) and symlinks are skipped by design (a
+symlink can't lead the read out of the mirror tree); a per-repo match cap or an
+over-size file skipped sets `truncated: true` so a bounded scan never reads as
+exhaustive. Scanning `dev` and `main` in one view is two mirrors (`mirror
+--branch dev` / `--branch main` into separate `--purpose` snapshots, then `scan
+--workspace` each) — the code-search API only indexes the default branch, so a
+single-call API scan couldn't answer it honestly anyway.
+
 ### Named selections
 
 By default a selection lives in `./goldfinger.selection`. To keep several
@@ -895,6 +930,7 @@ structured payload the corresponding `--json` command emits:
 | `schema` | offline | the JSON Schema output contract (`goldfinger schema`) |
 | `selections` | offline | list named selections in the registry |
 | `workspaces_list` | disk | list mirror snapshot workspaces (never prunes) |
+| `scan` | disk | search the mirrored clones for a pattern (`scan --json`) |
 | `doctor` | GitHub (read) | preflight: token source, principal, tools on PATH, signing |
 | `check` | GitHub (read) | report selection drift vs. live discovery |
 | `select` | GitHub (read) + disk | resolve repos and freeze the lockfile |

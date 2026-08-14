@@ -58,7 +58,7 @@ func TestGuideJSONEmitsVersionedCatalogue(t *testing.T) {
 
 func TestGuideJSONIncludesQuietGlobalFlag(t *testing.T) {
 	caps := buildCapabilities(newRootCmd())
-	for _, name := range []string{"select", "mirror", "apply", "check", "selections", "doctor", "guide", "schema", "workspaces", "mcp"} {
+	for _, name := range []string{"select", "mirror", "apply", "check", "scan", "selections", "doctor", "guide", "schema", "workspaces", "mcp"} {
 		cmd := findCommand(t, caps, name)
 		quiet := findFlag(t, cmd, "--quiet")
 		assert.Falsef(t, quiet.Required, "%s --quiet must be optional", name)
@@ -131,7 +131,7 @@ func TestCapabilitiesListsExactlyTheRegisteredCommands(t *testing.T) {
 	// wrongly drops a real command, the ElementsMatch above would still pass (both
 	// sides share the filter), but this fixed set would catch the omission.
 	assert.ElementsMatch(t,
-		[]string{"select", "mirror", "apply", "check", "selections", "doctor", "guide", "schema", "workspaces", "mcp"},
+		[]string{"select", "mirror", "apply", "check", "scan", "selections", "doctor", "guide", "schema", "workspaces", "mcp"},
 		catalogued,
 		"the catalogue must list exactly goldfinger's own commands")
 }

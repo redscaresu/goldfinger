@@ -127,16 +127,34 @@ func reportReconciliation(errOut io.Writer, rec reconciliation, ws, owner, logPa
 // never git. The .git entry is accepted whether it is a directory (a normal
 // ghorg clone) or a file (a gitfile-linked worktree), so "is this a clone" is
 // answered honestly without assuming ghorg's exact layout.
+//
+// The root must be a REAL directory, tested with Lstat: a symlink at the clone
+// location — even one pointing at a valid git tree — is rejected. ghorg never
+// creates one, so its only source is tampering or an unrelated symlink a repo name
+// happens to match; counting it as covered would let reconcile claim coverage of a
+// tree it never actually walked through the workspace. (scan makes the same "is
+// this a real clone" judgement independently, via a workspace-confined os.Root
+// handle — see openScanClone.) Rejecting it keeps the report honest.
 func isGitClone(path string) bool {
-	if !isDir(path) {
+	if !isRealDir(path) {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(path, ".git"))
-	return err == nil
+	// Lstat (not Stat) the .git entry too: a real clone's .git is a directory
+	// (normal ghorg clone) or a regular file (gitfile-linked worktree). A .git
+	// SYMLINK is never something ghorg creates, so its only source is tampering —
+	// following it (os.Stat would) could count an unrelated git tree as this repo's
+	// clone and report false coverage. Accept only a real dir or regular file.
+	fi, err := os.Lstat(filepath.Join(path, ".git"))
+	if err != nil {
+		return false
+	}
+	return fi.IsDir() || fi.Mode().IsRegular()
 }
 
-// isDir reports whether path exists and is a directory.
-func isDir(path string) bool {
-	fi, err := os.Stat(path)
+// isRealDir reports whether path exists and is a directory that is NOT a symlink
+// (Lstat describes the entry itself, so a symlink to a directory reports
+// ModeSymlink and fails here).
+func isRealDir(path string) bool {
+	fi, err := os.Lstat(path)
 	return err == nil && fi.IsDir()
 }

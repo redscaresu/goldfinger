@@ -56,7 +56,7 @@ func TestMCPServerExposesExactlyTheReadAndPlanTools(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{
 		"guide", "schema", "selections", "check", "select", "mirror",
-		"apply_plan", "workspaces_list", "doctor",
+		"scan", "apply_plan", "workspaces_list", "doctor",
 	}, names, "the MCP tool set must be exactly the read-and-plan surface")
 
 	assert.NotContains(t, names, "apply",
@@ -337,6 +337,64 @@ func TestMCPWorkspacesListReflectsRootOnDisk(t *testing.T) {
 	require.Len(t, out.Workspaces, 1, "the one stamped snapshot on disk must be listed")
 	assert.Contains(t, out.Workspaces[0].Path, "audit-2026-08-05-101112.131")
 	assert.Equal(t, "audit", out.Workspaces[0].Purpose, "purpose is recovered from the sidecar manifest")
+}
+
+// TestMCPScanSearchesTheMirrorOffline proves the scan tool searches the mirrored
+// clones of a selection and returns a match report over the protocol with NO
+// token and NO network — the read-and-plan charter applied to the read path. It
+// also proves the honesty guarantee: a selected repo not on disk is reported
+// scanned:false rather than dropped.
+func TestMCPScanSearchesTheMirrorOffline(t *testing.T) {
+	t.Setenv(tokenEnvVar, "")
+	stubGhToken(t, "", false)
+	ws := t.TempDir()
+	mkClone(t, ws, "acme", "alpha", map[string]string{"Dockerfile": "FROM debian:bullseye\n"})
+	// "beta" is in the selection but never mirrored — must surface as not scanned.
+	selPath := filepath.Join(t.TempDir(), "goldfinger.selection")
+	require.NoError(t, selection.Write(selPath, scanSelection("acme", "alpha", "beta"), selection.WriteOptions{Overwrite: true}))
+
+	cs := connectMCPTestClient(t)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "scan",
+		Arguments: map[string]any{"path": selPath, "workspace": ws, "pattern": "debian:bullseye"},
+	})
+	require.NoError(t, err)
+	require.False(t, res.IsError, "scan must succeed offline with no token: %v", res.Content)
+
+	var out scanReport
+	decodeStructured(t, res, &out)
+	assert.Equal(t, scanReportVersion, out.Version)
+	assert.Equal(t, 2, out.ReposInSelection)
+	assert.Equal(t, 1, out.ReposScanned)
+	assert.Equal(t, 1, out.ReposNotScanned, "the unmirrored repo is accounted for, not dropped")
+	assert.Equal(t, 1, out.TotalMatches)
+	require.Len(t, out.Repos, 2)
+	assert.Equal(t, "acme/alpha", out.Repos[0].Repo)
+	require.Len(t, out.Repos[0].Matches, 1)
+	assert.Equal(t, "Dockerfile", out.Repos[0].Matches[0].Path)
+	assert.False(t, out.Repos[1].Scanned, "acme/beta was never mirrored")
+	assert.Equal(t, skipReasonNotMirrored, out.Repos[1].SkipReason)
+}
+
+// TestMCPScanToolIsReadOnlyOffline asserts the scan tool advertises the read-only,
+// closed-world hint set: it reads local files, never GitHub, never git.
+func TestMCPScanToolIsReadOnlyOffline(t *testing.T) {
+	cs := connectMCPTestClient(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+
+	var found *mcp.Tool
+	for _, tool := range res.Tools {
+		if tool.Name == "scan" {
+			found = tool
+			break
+		}
+	}
+	require.NotNil(t, found, "scan tool must be present")
+	require.NotNil(t, found.Annotations)
+	assert.True(t, found.Annotations.ReadOnlyHint, "scan must be read-only")
+	require.NotNil(t, found.Annotations.OpenWorldHint)
+	assert.False(t, *found.Annotations.OpenWorldHint, "scan is offline — a closed world")
 }
 
 // TestMCPSelectionsReflectsRegistryOnDisk proves the selections tool enumerates the

@@ -78,6 +78,9 @@ func buildSchemaCatalogue() schemaCatalogue {
 			"mirror-report": schemaDoc("mirror --report-json",
 				"The mirror summary mirror --report-json emits, built from the lockfile alone.",
 				mirrorReportSchemaObj()),
+			"scan": schemaDoc("scan --json",
+				"The match report scan --json emits from a read-only local search of the mirrored selection.",
+				scanReportSchemaObj()),
 			"capabilities": schemaDoc("guide --json",
 				"The CLI-surface catalogue guide --json emits.",
 				capabilitiesSchemaObj()),
@@ -341,6 +344,45 @@ func mirrorRepoInfoSchemaObj() map[string]any {
 		"defaultBranch": str(),
 		"branchStatus":  enumStr(branchStatusHas, branchStatusFallback, branchStatusUnknown, branchStatusDefault),
 	}, "repo", "defaultBranch", "branchStatus")
+}
+
+func scanReportSchemaObj() map[string]any {
+	return object(map[string]any{
+		"version":          integer(),
+		"pattern":          str(),
+		"ignoreCase":       boolean(),
+		"fixedStrings":     boolean(),
+		"workspace":        str(),
+		"owner":            str(),
+		"branch":           str(),
+		"reposInSelection": integer(),
+		"reposScanned":     integer(),
+		"reposWithMatches": integer(),
+		"reposNotScanned":  integer(),
+		"totalMatches":     integer(),
+		"truncated":        boolean(),
+		"repos":            arrayOf(scanRepoResultSchemaObj()),
+	}, "version", "pattern", "ignoreCase", "fixedStrings", "workspace", "owner",
+		"reposInSelection", "reposScanned", "reposWithMatches", "reposNotScanned",
+		"totalMatches", "truncated", "repos")
+}
+
+func scanRepoResultSchemaObj() map[string]any {
+	return object(map[string]any{
+		"repo":       str(),
+		"scanned":    boolean(),
+		"skipReason": str(),
+		"matches":    arrayOf(scanMatchSchemaObj()),
+		"truncated":  boolean(),
+	}, "repo", "scanned", "matches")
+}
+
+func scanMatchSchemaObj() map[string]any {
+	return object(map[string]any{
+		"path": str(),
+		"line": integer(),
+		"text": str(),
+	}, "path", "line", "text")
 }
 
 func capabilitiesSchemaObj() map[string]any {

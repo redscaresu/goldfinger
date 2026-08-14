@@ -19,6 +19,7 @@ const (
 	checkReportVersion       = 1
 	selectionsReportVersion  = 1
 	mirrorReportVersion      = 1
+	scanReportVersion        = 1
 	applyPlanVersion         = 1
 	doctorReportVersion      = 1
 	schemaCatalogueVersion   = 1

@@ -575,6 +575,118 @@
       "title": "mirror --report-json",
       "type": "object"
     },
+    "scan": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The match report scan --json emits from a read-only local search of the mirrored selection.",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "fixedStrings": {
+          "type": "boolean"
+        },
+        "ignoreCase": {
+          "type": "boolean"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "repos": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "matches": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "line": {
+                      "type": "integer"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "line",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "scanned": {
+                "type": "boolean"
+              },
+              "skipReason": {
+                "type": "string"
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "repo",
+              "scanned",
+              "matches"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "reposInSelection": {
+          "type": "integer"
+        },
+        "reposNotScanned": {
+          "type": "integer"
+        },
+        "reposScanned": {
+          "type": "integer"
+        },
+        "reposWithMatches": {
+          "type": "integer"
+        },
+        "totalMatches": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "pattern",
+        "ignoreCase",
+        "fixedStrings",
+        "workspace",
+        "owner",
+        "reposInSelection",
+        "reposScanned",
+        "reposWithMatches",
+        "reposNotScanned",
+        "totalMatches",
+        "truncated",
+        "repos"
+      ],
+      "title": "scan --json",
+      "type": "object"
+    },
     "select": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
