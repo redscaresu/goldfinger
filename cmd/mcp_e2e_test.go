@@ -102,6 +102,16 @@ func TestMCPServerSubprocessSpeaksCleanStdioJSONRPC(t *testing.T) {
 		{name: "schema"},
 		{name: "selections"},
 		{name: "workspaces_list"},
+		// scan is the newest offline read-and-plan handler and, unlike the others,
+		// walks the filesystem and (in the CLI path) prints stderr warnings — exactly
+		// the shape of handler this stdio-cleanliness guard exists for. An empty
+		// workspace means every selected repo reports scanned:false, so the call is
+		// deterministic and offline (no mirror needed) while still driving the handler.
+		{name: "scan", args: map[string]any{
+			"path":      selPath,
+			"pattern":   "goldfinger",
+			"workspace": t.TempDir(),
+		}},
 		{name: "apply_plan", args: map[string]any{
 			"path":           selPath,
 			"branch":         "bump-dep",
