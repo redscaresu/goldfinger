@@ -39,7 +39,8 @@ func newMCPCmd() *cobra.Command {
 		Long: "mcp runs goldfinger as a Model Context Protocol server over stdio, exposing " +
 			"its read-only and plan-only surface as MCP tools: guide/schema/selections " +
 			"(catalogue and contracts), check/select/mirror (discovery, freezing, and " +
-			"local mirroring), workspaces_list, doctor, and apply_plan.\n\n" +
+			"local mirroring), scan (local match search over the mirror), " +
+			"workspaces_list, doctor, and apply_plan.\n\n" +
 			"apply is deliberately NOT a tool. A real apply opens PRs and is the human's " +
 			"to run: apply_plan instead returns the exact, digest-bound `goldfinger apply` " +
 			"command (dry-run and live variants) for a human to review and execute. The " +
@@ -140,6 +141,11 @@ func newMCPServerWithDeps(d mcpDeps) *mcp.Server {
 		Description: "List the ephemeral mirror snapshot workspaces under the workspace root (the same document as `workspaces list --json`). Read-only: it never prunes.",
 		Annotations: readOnlyLocal("goldfinger workspaces list"),
 	}, mcpWorkspacesListHandler)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "scan",
+		Description: "Search the mirrored clones of a selection for a regular expression and return a versioned match report (the same document as `scan --json`). It searches ONLY the selected repos already mirrored under the workspace (mirror first) — no git, no network, no token, zero GitHub rate limit. A selected repo not on disk is reported scanned:false (never silently dropped); binary files and symlinks are skipped; a per-repo match cap, an oversize-file skip, or a file/dir that could not be read sets truncated:true.",
+		Annotations: readOnlyLocal("goldfinger scan"),
+	}, mcpScanHandler)
 
 	// Read-only tools that reach GitHub / the environment.
 	mcp.AddTool(srv, &mcp.Tool{
@@ -247,6 +253,47 @@ func mcpWorkspacesListHandler(_ context.Context, _ *mcp.CallToolRequest, _ struc
 		Pruned:     false,
 		Workspaces: nonNilWorkspaces(all),
 	}, nil
+}
+
+// --- scan ------------------------------------------------------------------
+
+// mcpScanIn names the selection to search and the pattern to search for. The
+// search is entirely local (the mirrored clones under the workspace), so it takes
+// no token and reaches no network.
+type mcpScanIn struct {
+	mcpSelectionRef
+	Pattern      string `json:"pattern" jsonschema:"the pattern to search for (required); a regular expression unless fixed_strings is set"`
+	Workspace    string `json:"workspace,omitempty" jsonschema:"workspace the selection was mirrored into (default ~/goldfinger; repos are read from <workspace>/<owner>)"`
+	IgnoreCase   bool   `json:"ignore_case,omitempty" jsonschema:"case-insensitive match"`
+	FixedStrings bool   `json:"fixed_strings,omitempty" jsonschema:"treat the pattern as a literal string, not a regular expression"`
+}
+
+// mcpScanHandler answers the scan tool: it reads the lockfile for the repo set,
+// resolves the workspace, and returns the local match report. It performs only
+// read-only filesystem work through computeScanReport — no token, no network, no
+// git — so it is safe inside the stdio server.
+func mcpScanHandler(_ context.Context, _ *mcp.CallToolRequest, in mcpScanIn) (*mcp.CallToolResult, scanReport, error) {
+	path, err := resolveSelectionPath(in.Name, in.Path)
+	if err != nil {
+		return nil, scanReport{}, err
+	}
+	sel, err := selection.Read(path)
+	if err != nil {
+		return nil, scanReport{}, err
+	}
+	ws, _, err := resolveWorkspace(in.Workspace, "", "")
+	if err != nil {
+		return nil, scanReport{}, err
+	}
+	rep, err := computeScanReport(sel, ws, scanOptions{
+		pattern:      in.Pattern,
+		ignoreCase:   in.IgnoreCase,
+		fixedStrings: in.FixedStrings,
+	})
+	if err != nil {
+		return nil, scanReport{}, err
+	}
+	return nil, rep, nil
 }
 
 // --- doctor ----------------------------------------------------------------

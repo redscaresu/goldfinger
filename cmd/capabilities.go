@@ -127,6 +127,17 @@ var curatedCapabilities = map[string]curatedCommand{
 			nameShapeNote,
 		},
 	},
+	"scan": {
+		example: `goldfinger scan --json "debian:bullseye"`,
+		notes: []string{
+			"takes exactly one positional pattern (a RE2 regular expression by default; -F/--fixed-strings for a literal match, -i/--ignore-case for case-insensitive)",
+			"searches the clones already on disk under the workspace (default ~/goldfinger, override with --workspace); mirror the selection first — it runs no git, opens no network, and needs no token",
+			"multi-branch is two mirrors: `mirror --purpose audit --branch dev` and `--branch main` into separate snapshots, then scan each --workspace",
+			"a selected repo not present under the workspace is reported as not scanned (with a reason), never silently dropped; a size/match cap — or a file it could not read — sets truncated and warns on stderr",
+			nameSelectionExclusiveNote,
+			nameShapeNote,
+		},
+	},
 	"selections": {
 		example: "goldfinger selections --json",
 	},
@@ -145,7 +156,7 @@ var curatedCapabilities = map[string]curatedCommand{
 		example: "goldfinger mcp",
 		notes: []string{
 			"serves goldfinger's read-and-plan surface to an AI agent over MCP (Model Context Protocol) on stdio; stdin/stdout are the JSON-RPC channel — do not pipe anything else into them",
-			"exposes tools guide, schema, selections, check, select, mirror, workspaces_list, doctor, and apply_plan",
+			"exposes tools guide, schema, selections, check, select, mirror, scan, workspaces_list, doctor, and apply_plan",
 			"apply is deliberately NOT a tool: opening PRs is the human's to run; apply_plan instead returns the exact, digest-bound `goldfinger apply` command (dry-run and live variants) for a human to review and execute",
 			"the server never opens PRs and never runs git",
 		},

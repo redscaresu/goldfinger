@@ -29,6 +29,18 @@ func sampleSelection() models.Selection {
 	}
 }
 
+// ownedSelection is sampleSelection re-homed under a single owner — both the
+// top-level owner and every repo's owner — so it satisfies the single-owner
+// consistency invariant the read boundary enforces.
+func ownedSelection(owner string) models.Selection {
+	sel := sampleSelection()
+	sel.Owner = owner
+	for i := range sel.Repos {
+		sel.Repos[i].Owner = owner
+	}
+	return sel
+}
+
 func TestWriteReadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "goldfinger.selection")
 	want := sampleSelection()
@@ -38,6 +50,86 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	got, err := Read(path)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
+}
+
+// TestReadRejectsUnsafeOrInconsistentLockfiles proves the read boundary refuses a
+// tampered lockfile that would break the provable-same-set guarantee: a name that
+// could escape the workspace when joined into a clone path, or a repo owner that
+// diverges from the selection owner (so scan/mirror and apply would act on
+// different repos).
+func TestReadRejectsUnsafeOrInconsistentLockfiles(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*models.Selection)
+		wantErr string
+	}{
+		{"repo name traverses up", func(s *models.Selection) { s.Repos[0].Name = "../evil" }, "unsafe"},
+		{"repo name is dotdot", func(s *models.Selection) { s.Repos[0].Name = ".." }, "unsafe"},
+		{"repo name has separator", func(s *models.Selection) { s.Repos[0].Name = "a/b" }, "unsafe"},
+		{"repo name embeds newline", func(s *models.Selection) { s.Repos[0].Name = "a\nb" }, "unsafe"},
+		{"repo name embeds carriage return", func(s *models.Selection) { s.Repos[0].Name = "a\rb" }, "unsafe"},
+		{"repo name embeds tab", func(s *models.Selection) { s.Repos[0].Name = "a\tb" }, "unsafe"},
+		{"repo name embeds space", func(s *models.Selection) { s.Repos[0].Name = "a b" }, "unsafe"},
+		{"top-level owner traverses up", func(s *models.Selection) { s.Owner = "../elsewhere" }, "unsafe or empty owner"},
+		{"empty top-level owner", func(s *models.Selection) { s.Owner = "" }, "unsafe or empty owner"},
+		{"repo owner diverges", func(s *models.Selection) { s.Repos[0].Owner = "other" }, "does not match the selection owner"},
+		{"repo owner traverses up", func(s *models.Selection) { s.Repos[0].Owner = "../elsewhere" }, "does not match the selection owner"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "goldfinger.selection")
+			sel := sampleSelection()
+			tc.mutate(&sel)
+			// Write does not guard names, so this simulates a hand-edited/hostile file.
+			require.NoError(t, Write(path, sel, WriteOptions{Overwrite: true}))
+
+			_, err := Read(path)
+			require.Error(t, err, "a tampered lockfile must be rejected at read")
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestReadRejectsDuplicateRepoIdentities proves the read boundary refuses a
+// lockfile that lists the same repo twice, including a case-only variant: both
+// spellings resolve to ONE clone dir <workspace>/<owner>/<name>, so mirror/scan
+// would double-count it and apply could open two PRs against one repo. GitHub repo
+// names are case-insensitive for uniqueness, as is the default macOS filesystem, so
+// the check folds case.
+func TestReadRejectsDuplicateRepoIdentities(t *testing.T) {
+	cases := []struct {
+		name string
+		dup  string
+	}{
+		{"exact duplicate", "goldfinger"},
+		{"case-variant duplicate", "GoldFinger"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "goldfinger.selection")
+			sel := sampleSelection()
+			sel.Repos = append(sel.Repos, models.Repo{Owner: sel.Owner, Name: tc.dup, DefaultBranch: "main"})
+			require.NoError(t, Write(path, sel, WriteOptions{Overwrite: true}))
+
+			_, err := Read(path)
+			require.Error(t, err, "a lockfile listing one repo twice must be rejected at read")
+			assert.Contains(t, err.Error(), "more than once")
+		})
+	}
+}
+
+// TestReadAcceptsCaseVariantOwner proves the owner-consistency check is
+// case-insensitive (GitHub treats owner logins that way), so a legitimate case
+// variant is not rejected.
+func TestReadAcceptsCaseVariantOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "goldfinger.selection")
+	sel := sampleSelection()
+	sel.Repos[0].Owner = "RedScareSU" // same owner, different case
+	require.NoError(t, Write(path, sel, WriteOptions{Overwrite: true}))
+
+	got, err := Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, "RedScareSU", got.Repos[0].Owner)
 }
 
 func TestWriteNoOverwriteRefusesExisting(t *testing.T) {
@@ -76,8 +168,7 @@ func TestWriteConcurrentCreateOrFailExactlyOneWins(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sel := sampleSelection()
-			sel.Owner = fmt.Sprintf("writer-%d", i)
+			sel := ownedSelection(fmt.Sprintf("writer-%d", i))
 			<-start // line them all up so the link race is real
 			results[i] = Write(path, sel, WriteOptions{Overwrite: false})
 		}(i)
@@ -180,9 +271,7 @@ func TestNamedSelectionRegistry(t *testing.T) {
 	for _, n := range []string{"payments", "platform"} {
 		p, err := PathForName(n)
 		require.NoError(t, err)
-		sel := sampleSelection()
-		sel.Owner = n
-		require.NoError(t, Write(p, sel, WriteOptions{Overwrite: true})) // Write creates the registry dir
+		require.NoError(t, Write(p, ownedSelection(n), WriteOptions{Overwrite: true})) // Write creates the registry dir
 	}
 
 	names, err = Names()

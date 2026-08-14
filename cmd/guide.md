@@ -235,6 +235,42 @@ DRIFT CHECK
   and never re-runs discovery inside mirror/apply. Exit status makes it a CI
   gate: 0 in sync, 1 drift found, 2 error.
 
+SCAN — read/audit the mirrored fleet (scan)
+  scan is the read counterpart to apply's write path: read-only EOL / CVE /
+  supply-chain sweeps over the frozen selection ("where does debian:bullseye
+  appear?", "does any repo pin a poisoned name@version?"). It reads the lockfile
+  for the exact repo set, then greps the clones already on disk — so mirror first.
+       goldfinger mirror                       # clone the selection (step 2)
+       goldfinger scan "debian:bullseye"       # regex search, human summary
+       goldfinger scan --json "name@1\.2\.3"   # JSON match report on stdout
+  It is entirely local: no git, no network, no token — so it burns ZERO GitHub
+  rate limit (the whole point of reading via local clones instead of the API).
+  The pattern is a RE2 regular expression by default; -F/--fixed-strings searches
+  for a literal (metacharacters escaped), -i/--ignore-case is case-insensitive.
+  Repos are read from <workspace>/<owner> (default ~/goldfinger; override with
+  --workspace to point at a snapshot).
+
+  Provable-same-set, applied to reads: scan searches EXACTLY the lockfile's repos
+  and no other dir on disk. A selected repo not present under the workspace is
+  reported as not scanned (scanned:false, skipReason) and counted in
+  reposNotScanned — never silently dropped. A scan trimmed by a cap (a per-repo
+  match cap, or a file over the size limit skipped), or by a file/dir it could not
+  read, sets truncated:true and warns on stderr; binary files (NUL byte) and
+  symlinks are skipped by design (grep's default; a symlink can't lead the read out
+  of the tree).
+
+  Multi-branch (dev vs main in one sweep) is two mirrors, not a REST scan: the
+  code-search API only indexes the default branch, and per-branch blob reads would
+  reintroduce the rate-limited API scan mirror exists to avoid. So:
+       goldfinger mirror --purpose audit --branch dev
+       goldfinger mirror --purpose audit --branch main
+       goldfinger scan --workspace ~/goldfinger/audit-dev-<stamp>  --json "PATTERN"
+       goldfinger scan --workspace ~/goldfinger/audit-main-<stamp> --json "PATTERN"
+       # diff the two JSON reports
+  When the workspace is a --purpose snapshot, scan reads the branch from its
+  sidecar manifest and reports it as `branch` (the branch the mirror requested;
+  a repo may have fallen back to its default, same caveat as the mirror report).
+
 NAMED SELECTIONS
   By default a selection is ./goldfinger.selection. To keep several standing
   cohorts, name them: `select --name platform ...` stores it in a registry
@@ -321,6 +357,7 @@ MACHINE-READABLE OUTPUT
        goldfinger select --json ...   -> {selectionPath, selection:{…lockfile…}, digest}
        goldfinger doctor --json       -> {version, checks:[{check, status, detail, fix}]}
        goldfinger check --json        -> {version, inSync, added, removed, …}
+       goldfinger scan --json ...     -> {version, pattern, workspace, owner, branch?, reposScanned, reposNotScanned, totalMatches, truncated, repos:[…]}
        goldfinger selections --json   -> {version, selections:[{name, owner, …}]}
        goldfinger workspaces list --json -> {version, root, action, workspaces:[…]}
        goldfinger mirror --report-json -> {version, workspace, owner, reconciliation:{inSelection, onDisk, notOnDisk, branch?}, repos, …}
@@ -333,6 +370,7 @@ MACHINE-READABLE OUTPUT
        goldfinger apply --quiet ...    -> dry-run status digest on stdout (no temp
                                           file); --plan-json instead -> plan JSON,
                                           digest suppressed; a live run -> empty
+       goldfinger scan --quiet ...     -> empty stdout unless --json (then compact)
        goldfinger check --quiet        -> empty stdout; exit code carries sync/drift
        goldfinger doctor --quiet       -> empty stdout; exit code carries pass/fail
        goldfinger selections --quiet   -> empty stdout unless --json
@@ -389,7 +427,7 @@ NOTES FOR AI AGENTS
     from one lockfile — that is the guarantee goldfinger exists to provide.
   - If your host speaks MCP, `goldfinger mcp` serves this same read-and-plan
     surface as typed tools over stdio (guide, schema, selections, check, select,
-    mirror, workspaces_list, doctor, apply_plan) — call them instead of shelling
+    mirror, scan, workspaces_list, doctor, apply_plan) — call them instead of shelling
     out and parsing text. There is deliberately no `apply` tool: `apply_plan`
     returns the exact, digest-bound `goldfinger apply` command (dry-run and live
     variants) for a human to run, because opening PRs stays a human action.

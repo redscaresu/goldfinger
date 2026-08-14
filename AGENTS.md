@@ -53,6 +53,18 @@ it does not reimplement mirroring or PR-fanout.
   from the lockfile alone (no `git`, no re-discovery): branch presence is a fact
   **recorded at selection time** (`select --branch-presence`) and can drift, so a
   branch never checked reports `unknown` — do not add code that guesses it.
+- `goldfinger scan` (cmd/scan.go, cmd/scan_search.go) is the read counterpart to
+  `apply`: it searches the clones `mirror` already put on disk and never touches
+  GitHub. It reads the **lockfile** for its repo set (never re-discovery) and
+  searches **only** those repos under the workspace — the same provable-same-set
+  guarantee applied to reads, asserted by a test that a rogue on-disk clone
+  outside the selection is ignored. Keep it purely local: **no git, no network,
+  no token** — the search is Go stdlib `regexp` (RE2) over files read with
+  `os.ReadFile`. A selected repo not on disk must report `scanned:false` with a
+  skip reason (never silently dropped); binary files and symlinks are skipped by
+  design; a per-repo match cap or an over-size file skipped sets `truncated:true`
+  so a bounded scan never reads as exhaustive. Do not add a REST/code-search
+  content scan here — reading via the mirror instead of the API is the point.
 - Tokens go to child tools via their env vars (`GHORG_GITHUB_TOKEN`,
   `GITHUB_TOKEN`), never argv. Tests assert no token appears in argv.
 - `goldfinger mcp` (cmd/mcp.go) serves goldfinger's **read-and-plan** surface over
