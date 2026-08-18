@@ -109,6 +109,11 @@ func newApplyCmd() *cobra.Command {
 			if err := requireTool("multi-gitter", "https://github.com/lindell/multi-gitter#installation"); err != nil {
 				return err
 			}
+			// Surface the known-good-floor advisory HERE, not only in `doctor`: the
+			// floor exists to make silent behavioural drift visible, and an operator
+			// (or agent) who runs apply without a prior doctor would otherwise never
+			// see it. Advisory only — apply never refuses on version (see the helper).
+			warnMultiGitterFloor(cmd.Context(), errOut)
 			if err := verifyAndAnnouncePrincipal(cmd.Context(), errOut, token); err != nil {
 				return err
 			}
@@ -154,6 +159,49 @@ func newApplyCmd() *cobra.Command {
 	f.StringVar(&expectSHA, "expect-selection-sha256", "", "refuse to run unless the selection lockfile's sha256 (over its exact bytes) matches this 64-char hex digest — binds an apply to the precise selection a plan was reviewed against (empty = no check)")
 	f.BoolVar(&planJSON, "plan-json", false, "emit a machine-readable plan of what goldfinger will invoke (invocation metadata only, not the diff; command redacted to argv[0]) on stdout before delegating; supplements — does not replace — the dry-run status digest (on stderr; suppressed under --quiet, where the plan owns stdout)")
 	return cmd
+}
+
+// warnMultiGitterFloor prints doctor's known-good-floor advisory at the point of
+// action when the installed multi-gitter is below goldfinger's verified floor (or
+// its version can't be read). It reuses doctor's probe and floor logic so the two
+// surfaces can't drift: apply's --sign local (--git-type=cmd) and dry-run digest
+// parsing were verified against multiGitterKnownGoodFloor, and an older binary may
+// behave differently.
+//
+// It is deliberately advisory, never a gate: the floor is known-GOOD, not
+// known-broken (an older multi-gitter may work fine, and the dry-run parser already
+// fails safe if its output drifts), so blocking a possibly-working version would be
+// user-hostile. errOut is already quiet-suppressed by the caller, so a --quiet run
+// stays silent. A version that meets the floor prints nothing.
+func warnMultiGitterFloor(ctx context.Context, errOut io.Writer) {
+	_, version, ok := probeToolDefault(ctx, "multi-gitter")
+	if !ok {
+		// requireTool already confirmed presence; if the probe can't even find it now
+		// (a race, or a goBinDir-only install), let the real run surface that rather
+		// than emit a misleading "can't read version" line here.
+		return
+	}
+	if line, warn := multiGitterFloorLine(version); warn {
+		fmt.Fprintln(errOut, line)
+	}
+}
+
+// multiGitterFloorLine formats the point-of-action advisory for a probed
+// multi-gitter version, or ("", false) when the version meets the floor (nothing
+// to say). It is the pure core of warnMultiGitterFloor, split out so the message
+// assembly is unit-testable without a real probe; the below-floor / unreadable
+// decision itself is versionFloorWarning's (shared with doctor, so the two can't
+// drift).
+func multiGitterFloorLine(version string) (string, bool) {
+	detail, fix, warn := versionFloorWarning(version, multiGitterKnownGoodFloor)
+	if !warn {
+		return "", false
+	}
+	msg := "warning: multi-gitter " + detail
+	if fix != "" {
+		msg += " (" + fix + ")"
+	}
+	return msg, true
 }
 
 type applyOutputOptions struct {
