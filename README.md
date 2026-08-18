@@ -19,37 +19,24 @@ by AI agents as much as by people**.
 
 ## Demo
 
-```console
+![goldfinger freezing a selection, mirroring it, scanning the clones, and dry-run-applying a change across the set](docs/demo.gif)
+
+<sub>A real, unedited run across a handful of public repos — the apply is a dry-run,
+so it opens nothing. Regenerate with `vhs docs/demo.tape`.</sub>
+
+The same flow, to copy:
+
+```sh
 # 1. freeze the target set → ./goldfinger.selection
-$ goldfinger select --org mycompany --topic platform
-✓ 24 repo(s) written to ./goldfinger.selection (digest a1b2c3d4)
-
+goldfinger select --org mycompany --topic platform
 # 2. clone them locally to grep and test against (no API reads)
-$ goldfinger mirror
-✓ mirror complete → ~/goldfinger/mycompany
-
+goldfinger mirror
 # 3. read the fleet — regex over the local clones, zero GitHub rate limit
-$ goldfinger scan "golang:1.22"
-mycompany/api-gateway   Dockerfile:1:FROM golang:1.22
-mycompany/auth-service  Dockerfile:1:FROM golang:1.22
-✓ scan complete: 24/24 repo(s) searched, 18 match(es) in 9 repo(s)
-
-# 4. DRY-RUN by default — opens nothing
-$ goldfinger apply --branch bump-go --commit-message "Bump Go" \
-    --pr-title "Bump Go" --sign local \
-    -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
-▶ Applying to 24 repo(s) [dry-run — no push, no PRs] onto base each repo's default branch
-dry-run: 24 repos — 9 would change, 15 no-change, 0 errors
-
-# 5. for real — add --dry-run=false --confirm to open the 9 PRs
-$ goldfinger apply … --dry-run=false --confirm -- sed -i '…' Dockerfile
-▶ Applying to 24 repo(s) [LIVE — opening PRs] onto base each repo's default branch
-✓ apply complete
+goldfinger scan "golang:1.22"
+# 4. DRY-RUN a change (opens nothing); add --dry-run=false --confirm to open the PRs
+goldfinger apply --branch bump-go --commit-message "Bump Go" --pr-title "Bump Go" \
+  --sign local -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
 ```
-
-<sub>Illustrative session — repo names and counts are examples; the line formats
-(`▶`/`✓` banners on stderr, data on stdout) are exactly what goldfinger prints. A
-recorded GIF can replace this block later.</sub>
 
 > The repos you mirror, scan, and change are **provably the same selection** —
 > frozen in one lockfile, so no filter can drift between phases.
