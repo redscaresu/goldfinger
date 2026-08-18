@@ -352,6 +352,40 @@ func TestResolvePRBody(t *testing.T) {
 	})
 }
 
+// multiGitterFloorLine is apply's point-of-action version advisory. A version at
+// or above the floor says nothing; a below-floor or unreadable version produces a
+// single "warning:" line carrying the shared floor detail and (when present) the
+// upgrade fix. This locks the message shape and the silent-when-fine contract; the
+// below-floor decision itself is versionFloorWarning's, tested in doctor_test.go.
+func TestMultiGitterFloorLine(t *testing.T) {
+	t.Run("at the floor says nothing", func(t *testing.T) {
+		line, warn := multiGitterFloorLine("multi-gitter version " + multiGitterKnownGoodFloor)
+		assert.False(t, warn)
+		assert.Empty(t, line)
+	})
+
+	t.Run("above the floor says nothing", func(t *testing.T) {
+		line, warn := multiGitterFloorLine("multi-gitter version 1.4.0")
+		assert.False(t, warn)
+		assert.Empty(t, line)
+	})
+
+	t.Run("below the floor warns with an upgrade fix", func(t *testing.T) {
+		line, warn := multiGitterFloorLine("multi-gitter version 0.60.0")
+		require.True(t, warn)
+		assert.True(t, strings.HasPrefix(line, "warning: multi-gitter "), line)
+		assert.Contains(t, line, "below goldfinger's known-good floor "+multiGitterKnownGoodFloor)
+		assert.Contains(t, line, "upgrade multi-gitter to >= "+multiGitterKnownGoodFloor)
+	})
+
+	t.Run("unreadable version warns without a fix parenthetical", func(t *testing.T) {
+		line, warn := multiGitterFloorLine("")
+		require.True(t, warn)
+		assert.Contains(t, line, "could not read a version")
+		assert.NotContains(t, line, "(upgrade")
+	})
+}
+
 // The apply command's guard paths all return before any tool/network use, so
 // they are deterministic regardless of whether multi-gitter is installed. The
 // pure flag guards fail before auth; the missing-token case supplies valid flags
