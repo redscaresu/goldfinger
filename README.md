@@ -20,25 +20,36 @@ by AI agents as much as by people**.
 ## Demo
 
 ```console
-$ goldfinger select --org mycompany --topic platform      # 1. freeze the target set
-resolved 24 repos → ./goldfinger.selection  (digest a1b2c3d4)
+# 1. freeze the target set → ./goldfinger.selection
+$ goldfinger select --org mycompany --topic platform
+✓ 24 repo(s) written to ./goldfinger.selection (digest a1b2c3d4)
 
-$ goldfinger mirror                                        # 2. clone them locally to grep/test
-mirrored 24/24 repos → ~/goldfinger/mycompany
+# 2. clone them locally to grep and test against (no API reads)
+$ goldfinger mirror
+✓ mirror complete → ~/goldfinger/mycompany
 
-$ goldfinger scan "golang:1.22"                            # 3. read the fleet — no API, zero rate limit
-9 repos match "golang:1.22"  (18 matches across 24 repos scanned)
+# 3. read the fleet — regex over the local clones, zero GitHub rate limit
+$ goldfinger scan "golang:1.22"
+mycompany/api-gateway   Dockerfile:1:FROM golang:1.22
+mycompany/auth-service  Dockerfile:1:FROM golang:1.22
+✓ scan complete: 24/24 repo(s) searched, 18 match(es) in 9 repo(s)
 
+# 4. DRY-RUN by default — opens nothing
 $ goldfinger apply --branch bump-go --commit-message "Bump Go" \
     --pr-title "Bump Go" --sign local \
-    -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile      # 4. DRY-RUN by default — opens nothing
-would-change: 9   no-change: 15   error: 0
+    -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile
+▶ Applying to 24 repo(s) [dry-run — no push, no PRs] onto base each repo's default branch
+dry-run: 24 repos — 9 would change, 15 no-change, 0 errors
 
-$ goldfinger apply --branch bump-go --commit-message "Bump Go" \
-    --pr-title "Bump Go" --sign local --dry-run=false --confirm \
-    -- sed -i 's|golang:1.22|golang:1.24|g' Dockerfile      # 5. for real — opens 9 PRs
-opened 9 pull requests
+# 5. for real — add --dry-run=false --confirm to open the 9 PRs
+$ goldfinger apply … --dry-run=false --confirm -- sed -i '…' Dockerfile
+▶ Applying to 24 repo(s) [LIVE — opening PRs] onto base each repo's default branch
+✓ apply complete
 ```
+
+<sub>Illustrative session — repo names and counts are examples; the line formats
+(`▶`/`✓` banners on stderr, data on stdout) are exactly what goldfinger prints. A
+recorded GIF can replace this block later.</sub>
 
 > The repos you mirror, scan, and change are **provably the same selection** —
 > frozen in one lockfile, so no filter can drift between phases.
@@ -98,6 +109,10 @@ authors the `apply` commit from it.
 Every read command takes `--json` (machine data on stdout, human banners on
 stderr) and `--quiet` for compact, token-cheap output. Exit codes are a stable
 contract: `0` success, `1` a domain outcome (drift / failed check), `2` error.
+
+For a one-off campaign, `mirror --purpose <name>` clones into a fresh, timestamped
+`~/goldfinger/<name>-<stamp>` snapshot instead of the shared workspace, so parallel
+efforts don't collide; `goldfinger workspaces` lists and prunes them.
 
 ## Safety model
 
