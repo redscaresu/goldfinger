@@ -96,7 +96,7 @@ func resolveQuiet(root, cmd *cobra.Command, args []string) bool {
 		return true
 	}
 	pf := root.PersistentFlags()
-	pf.ParseErrorsWhitelist.UnknownFlags = true
+	pf.ParseErrorsAllowlist.UnknownFlags = true
 	pf.SetOutput(io.Discard)
 	_ = pf.Parse(args)
 	quiet, _ := pf.GetBool(quietFlagName)
