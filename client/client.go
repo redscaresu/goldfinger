@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/google/go-github/v89/github"
 	"github.com/redscaresu/goldfinger/models"
@@ -64,7 +65,17 @@ func (c *Client) ListRepos(ctx context.Context, owner string) ([]models.Repo, st
 	}
 	// The authenticated user's own repos: use /user/repos so private repos
 	// are included. The authenticated identity is always a user.
-	if owner == c.login {
+	//
+	// EqualFold, because GitHub treats logins case-insensitively while c.login
+	// holds the one canonical spelling. An operator who types --org RedScareSU
+	// (copied off a profile page) would otherwise miss this branch and fall
+	// through to ListByUser, whose contract is PUBLIC repositories only — a
+	// selection silently missing every private repo, with no error and no
+	// warning. The whole value of the frozen lockfile is that the set is
+	// reviewable, and a repo that was never listed cannot be reviewed. The
+	// lockfile validator already folds case on the same comparison
+	// (selection/selection.go).
+	if strings.EqualFold(owner, c.login) {
 		repos, err := c.paginate(func(page int) ([]*github.Repository, *github.Response, error) {
 			return c.gh.Repositories.ListByAuthenticatedUser(ctx, &github.RepositoryListByAuthenticatedUserOptions{
 				Affiliation: "owner",
@@ -105,7 +116,11 @@ func (c *Client) OwnerType(ctx context.Context, owner string) (string, error) {
 	if err := c.ensureLogin(ctx); err != nil {
 		return "", err
 	}
-	if owner == c.login {
+	// EqualFold for the same reason as ListRepos, though this path is not a
+	// correctness bug: a case-mismatched own login would fall through to
+	// Users.Get, which resolves logins case-insensitively and returns the right
+	// type anyway. Folding here restores the fast path and saves a request.
+	if strings.EqualFold(owner, c.login) {
 		return models.OwnerUser, nil
 	}
 	u, _, err := c.gh.Users.Get(ctx, owner)

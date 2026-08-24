@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -26,9 +25,9 @@ import (
 //   - a benign `include`/`includeIf` directive: the values we did read are almost
 //     certainly what git uses, but an include *could* override them — advisory
 //     uncertainty (unresolved=true, parseError=false).
-//   - a hard problem — a malformed section/line, an unreadable file, or malformed
-//     env-injected config (GIT_CONFIG_COUNT): git itself may reject this config, so
-//     a "pass" here would be a false pass (unresolved=true, parseError=true).
+//   - a hard problem — a malformed section or line, or an unreadable file: git
+//     itself may reject this config, so a "pass" here would be a false pass
+//     (unresolved=true, parseError=true).
 //
 // reason carries the human detail for whichever was last recorded (a hard problem
 // takes precedence over an include for messaging).
@@ -75,11 +74,20 @@ func gitBool(v string) bool {
 }
 
 // loadGitConfig reads git configuration the way git itself would for a commit in a
-// fresh checkout, in increasing-precedence order: system, then global, then
-// env-injected (GIT_CONFIG_COUNT). It never reads a repo-local .git/config and
-// never runs git. Identity env vars (GIT_AUTHOR_*/GIT_COMMITTER_*) are folded in
-// as the highest-precedence source for user.name/user.email, since git honours
-// them for authoring.
+// fresh checkout, in increasing-precedence order: system, then global, then the
+// identity env vars. It never reads a repo-local .git/config and never runs git.
+//
+// The sources it models are exactly the ones that SURVIVE the scrub apply applies
+// before exec'ing multi-gitter, which is what keeps this view honest: reporting a
+// source the delegate's git will never see would be a false pass, not extra care.
+// So GIT_CONFIG_GLOBAL/SYSTEM/NOSYSTEM are honoured (they are deliberately not
+// scrubbed — see models.gitGrandchildEnvVars) and GIT_AUTHOR_*/GIT_COMMITTER_* are
+// folded in as the highest-precedence source for user.name/user.email, since git
+// honours them for authoring and goldfinger passes them through. Env-injected
+// config (GIT_CONFIG_COUNT / GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n /
+// GIT_CONFIG_PARAMETERS) is deliberately NOT read: goldfinger strips those from
+// every delegate environment, so a value declared there reaches nothing, and a
+// malformed count can no longer make git reject the config either.
 func loadGitConfig() gitConfig {
 	cfg := gitConfig{values: map[string]string{}}
 
@@ -95,10 +103,6 @@ func loadGitConfig() gitConfig {
 			}
 		}
 	}
-
-	// Env-injected config (GIT_CONFIG_COUNT / GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n)
-	// has the highest file-like precedence in git; apply it last.
-	applyEnvInjectedConfig(&cfg)
 
 	// Fold in GIT_AUTHOR_*/GIT_COMMITTER_*. git needs a *complete* pair — author
 	// name+email AND committer name+email — to make a commit, each falling back to
@@ -172,41 +176,6 @@ func gitConfigFiles() []string {
 		}
 	}
 	return files
-}
-
-// applyEnvInjectedConfig folds GIT_CONFIG_COUNT-style env config into cfg. Each
-// key is of the form "section.key" or "section.subsection.key". git requires every
-// GIT_CONFIG_KEY_<n> AND GIT_CONFIG_VALUE_<n> in 0..count-1 to be present and the
-// count to be a clean integer; any deviation is a git error, so we mark a hard
-// parseError rather than guessing (a silently-absent value would otherwise become
-// "", a false clean read).
-func applyEnvInjectedConfig(cfg *gitConfig) {
-	countStr := os.Getenv("GIT_CONFIG_COUNT")
-	if countStr == "" {
-		return
-	}
-	// strconv.Atoi (not fmt.Sscanf) so trailing garbage like "5x" is rejected
-	// rather than partially parsed as 5.
-	count, err := strconv.Atoi(strings.TrimSpace(countStr))
-	if err != nil || count < 0 {
-		cfg.markParseError("malformed GIT_CONFIG_COUNT")
-		return
-	}
-	for i := 0; i < count; i++ {
-		key, keyOK := os.LookupEnv(fmt.Sprintf("GIT_CONFIG_KEY_%d", i))
-		val, valOK := os.LookupEnv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", i))
-		// git treats a missing key OR a missing value as an error — both must be
-		// set. os.LookupEnv distinguishes unset from a legitimately empty value.
-		if !keyOK || key == "" {
-			cfg.markParseError(fmt.Sprintf("missing GIT_CONFIG_KEY_%d", i))
-			continue
-		}
-		if !valOK {
-			cfg.markParseError(fmt.Sprintf("missing GIT_CONFIG_VALUE_%d", i))
-			continue
-		}
-		cfg.values[strings.ToLower(key)] = val
-	}
 }
 
 // parseGitConfigFile parses a single git-config (INI-like) file into cfg.values.

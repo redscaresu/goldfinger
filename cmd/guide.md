@@ -25,12 +25,27 @@ PREREQUISITES
     three.
     Precedence: GOLD_FINGER_PAT if set, else `gh auth token`. FOOTGUN: the
     `gh auth token` subprocess itself honours an ambient GH_TOKEN/GITHUB_TOKEN,
-    so a stray one silently changes which identity goldfinger (and ghorg)
-    authenticate as — a wrong-identity run looks like "0 repos", not an auth
-    error. Unless --quiet is set, every run prints its token source +
-    authenticated principal on stderr and warns when a gh token may be shadowed;
-    if the identity is wrong, `unset GITHUB_TOKEN GH_TOKEN` or set
-    GOLD_FINGER_PAT. The token is never printed.
+    so a stray one silently changes which identity goldfinger RESOLVES — a
+    wrong-identity run looks like "0 repos", not an auth error. Unless --quiet is
+    set, every run prints its token source + authenticated principal on stderr
+    and warns when a gh token may be shadowed; if the identity is wrong, `unset
+    GITHUB_TOKEN GH_TOKEN` or set GOLD_FINGER_PAT. The token is never printed.
+    Once resolved, that one token is the ONLY GitHub credential any child sees:
+    goldfinger scrubs every GitHub credential var it knows of — GOLD_FINGER_PAT,
+    GITHUB_TOKEN, GH_TOKEN, GHORG_GITHUB_TOKEN, ghorg's GHORG_GITHUB_APP_*
+    App-auth vars and GHORG_TOKEN_CMD (which ghorg would run to source a token) —
+    from the child environment and adds back only the delegate's own var, and
+    neutralises both delegates' own config files, which outrank a stripped env
+    var — ghorg's would put an App credential back, multi-gitter's would supply a
+    token that wins over the one goldfinger set. It also pins where that token
+    can go: ghorg is run with --scm=github --base-url= --protocol=https, so a
+    host GHORG_SCM_BASE_URL can't send your PAT to another server and a host
+    GHORG_CLONE_PROTOCOL=ssh can't quietly clone as your ssh key instead. So an
+    ambient token, a config-file token, or an App credential can't make ghorg,
+    multi-gitter, or your apply script (which gh would run under GH_TOKEN in
+    preference to GITHUB_TOKEN) act as a different account than the one printed.
+    Non-GitHub secrets in your environment are NOT filtered — your apply script
+    is your own program and inherits them.
   - ghorg and multi-gitter on PATH (the brew install above pulls both in;
     install them yourself only for non-brew setups).
   - Configure a git identity (git config user.name / user.email). multi-gitter
@@ -150,8 +165,27 @@ WORKFLOW
      Keep the durable artifact (the lockfile), not the clones.
 
      The lockfile is authoritative: goldfinger strips set-narrowing/pruning
-     GHORG_* env vars and forces an empty ghorgignore, and invokes multi-gitter
-     with an empty --config, so ambient host config can't change the set.
+     GHORG_* env vars, forces an empty ghorgignore, points ghorgonly at a path
+     that doesn't exist (it's an allowlist — an empty one would clone nothing),
+     and hands both ghorg and multi-gitter a config file of its own. Note what
+     that last one means for you: your ~/.config/ghorg/conf.yaml and
+     ~/.multi-gitter/config are neutralised for goldfinger runs — deliberately,
+     and they have to be, because each one outranks a stripped env var. ghorg's
+     re-creates the very vars goldfinger scrubbed (including GitHub App
+     credentials, which would make it clone as a different principal), and
+     multi-gitter's supplies a token that beats the one goldfinger resolved, plus
+     org/topic/skip-repo settings that would change which repos get PRs,
+     skip-pr/pr-auto-merge/api-push settings that would change what apply does to
+     them — a static `skip-pr: true` alone would push straight onto every repo's
+     default branch instead of opening a PR — and base-branch/draft/output
+     settings that would quietly differ from the dry-run digest you approved.
+     Configure a goldfinger run through goldfinger's own flags, not through the
+     delegates' config files. One documented gap: on runs where you name no
+     labels/reviewers, a static value for them still applies, and multi-gitter
+     makes the PR match it — adding metadata you were not shown, or, on a re-run
+     over an existing PR, dropping reviewers added since. goldfinger can't claim
+     those four keys, because multi-gitter reads a claimed-but-empty list as
+     "remove them all".
 
   3. Apply — run a change across the selection and open PRs:
        goldfinger apply --branch bump --commit-message "msg" --pr-title "title" \

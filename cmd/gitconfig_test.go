@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/redscaresu/goldfinger/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -168,57 +169,32 @@ func TestLoadGitConfigCompleteEnvIdentity(t *testing.T) {
 	assert.Equal(t, "ada@example.com", email)
 }
 
-func TestLoadGitConfigEnvInjectedConfig(t *testing.T) {
-	path := writeGlobalConfig(t, "")
-	isolateGitEnv(t, path)
+// TestLoadGitConfigIgnoresEnvInjectedConfigBecauseItIsScrubbed pins the coupling
+// between this view and the scrub, in both directions. loadGitConfig claims to
+// model the config that will actually reach multi-gitter's checkouts; apply strips
+// the GIT_CONFIG_* injection channels from the delegate environment, so a value
+// declared there reaches nothing, and folding it in here would report an identity
+// or a signing key the run does not have — a false pass, which is the one failure
+// mode doctor exists to prevent.
+//
+// The second assertion is what makes this more than a behaviour snapshot: it names
+// the reason. Drop GIT_CONFIG_COUNT from the scrub and the delegate's git starts
+// honouring it again, at which point NOT modelling it here becomes the lie instead.
+// Whoever makes that change has to come back to this test.
+func TestLoadGitConfigIgnoresEnvInjectedConfigBecauseItIsScrubbed(t *testing.T) {
+	isolateGitEnv(t, writeGlobalConfig(t, "[user]\n\tname = Ada Lovelace\n"))
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "user.name")
 	t.Setenv("GIT_CONFIG_VALUE_0", "Injected")
 
 	cfg := loadGitConfig()
-	name, ok := cfg.get("user.name")
-	assert.True(t, ok)
-	assert.Equal(t, "Injected", name)
-	assert.False(t, cfg.unresolved)
-}
+	name, _ := cfg.get("user.name")
+	assert.Equal(t, "Ada Lovelace", name, "env-injected config is stripped before any delegate runs, so it must not outrank the file git will really read")
+	assert.False(t, cfg.unresolved, "a variable goldfinger removes cannot make git reject the config, so it must not degrade resolution either")
 
-func TestLoadGitConfigMissingInjectedValueIsParseError(t *testing.T) {
-	// git requires GIT_CONFIG_VALUE_<n> for every declared key; a missing value is
-	// a git error, not a silent empty string. doctor must see a hard parse error so
-	// it can't report a clean config over one git would reject.
-	isolateGitEnv(t, writeGlobalConfig(t, ""))
-	t.Setenv("GIT_CONFIG_COUNT", "1")
-	t.Setenv("GIT_CONFIG_KEY_0", "user.name")
-	// deliberately do NOT set GIT_CONFIG_VALUE_0
-	os.Unsetenv("GIT_CONFIG_VALUE_0")
-
-	cfg := loadGitConfig()
-	assert.True(t, cfg.unresolved)
-	assert.True(t, cfg.parseError, "a missing injected value is a hard parse error")
-	assert.Contains(t, cfg.reason, "GIT_CONFIG_VALUE_0")
-	_, ok := cfg.get("user.name")
-	assert.False(t, ok, "a key with no value must not be recorded as an empty identity")
-}
-
-func TestLoadGitConfigTrailingGarbageCountIsParseError(t *testing.T) {
-	// "5x" must be rejected outright, not partially parsed as 5 (git rejects it).
-	isolateGitEnv(t, writeGlobalConfig(t, ""))
-	t.Setenv("GIT_CONFIG_COUNT", "5x")
-
-	cfg := loadGitConfig()
-	assert.True(t, cfg.parseError, "a non-integer GIT_CONFIG_COUNT is a hard parse error")
-	assert.Contains(t, cfg.reason, "GIT_CONFIG_COUNT")
-}
-
-func TestLoadGitConfigMalformedCountUnresolved(t *testing.T) {
-	path := writeGlobalConfig(t, "")
-	isolateGitEnv(t, path)
-	t.Setenv("GIT_CONFIG_COUNT", "not-a-number")
-
-	cfg := loadGitConfig()
-	assert.True(t, cfg.unresolved)
-	assert.True(t, cfg.parseError, "a malformed GIT_CONFIG_COUNT is a hard parse error")
-	assert.Contains(t, cfg.reason, "GIT_CONFIG_COUNT")
+	assert.Subset(t, models.GitGrandchildEnvVars(),
+		[]string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_*", "GIT_CONFIG_VALUE_*", "GIT_CONFIG_PARAMETERS"},
+		"the reason this view ignores env-injected config is that apply scrubs it; if that stops being true, loadGitConfig has to model it again")
 }
 
 func TestLoadGitConfigMissingGlobalIsClean(t *testing.T) {
