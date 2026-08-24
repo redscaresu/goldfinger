@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
+	"github.com/redscaresu/goldfinger/apply"
 	"github.com/spf13/cobra"
 )
 
@@ -103,8 +107,72 @@ func resolveQuiet(root, cmd *cobra.Command, args []string) bool {
 	return quiet
 }
 
+// interruptContext returns a root context cancelled by the first SIGINT or
+// SIGTERM, plus a function that restores default signal handling.
+//
+// It is one half of a pair and only works as one. Ctrl-C used to reach the
+// delegates for free — ghorg and multi-gitter shared goldfinger's process group,
+// so the terminal signalled them too. They now run in their own group
+// (setDelegateLifecycle), which means the terminal no longer reaches them and this
+// context is the ONLY thing that stops a running mirror or apply. Neither change is
+// safe alone: process groups without this would orphan a delegate that kept cloning
+// after Ctrl-C, and this without process groups would report a cancellation while
+// the delegate's git children carried on.
+//
+// Handling is restored BEFORE the context is cancelled, so a second Ctrl-C kills
+// the process outright. That escape hatch is the reason for hand-rolling rather
+// than calling signal.NotifyContext: NotifyContext keeps the signal registered
+// after it fires, so every later Ctrl-C is swallowed and an operator whose delegate
+// is ignoring the kill has no way out short of another terminal.
+func interruptContext(parent context.Context) (context.Context, func()) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	restore := func() { signal.Stop(sigs) }
+	return cancelOnSignal(parent, sigs, restore), restore
+}
+
+// cancelOnSignal is interruptContext's testable core: the ordering (restore, then
+// cancel) is the property worth pinning, so it takes the channel and the restore
+// hook rather than installing them itself.
+func cancelOnSignal(parent context.Context, sigs <-chan os.Signal, restore func()) context.Context {
+	ctx, cancel := context.WithCancel(parent)
+	go func() {
+		select {
+		case <-sigs:
+			restore()
+			cancel()
+		case <-ctx.Done():
+			cancel()
+		}
+	}()
+	return ctx
+}
+
+// interruptError collapses an interrupted run's failure into one honest word. A
+// cancelled delegate surfaces as "signal: killed" wrapped in whichever step was
+// running, which reads like goldfinger broke rather than like the operator stopped
+// it. The exit code stays 2: an interrupted run did not complete, so it is a
+// failure, not a domain signal (1, as `check` uses for drift).
+//
+// An error already tagged apply.ErrInterrupted is kept verbatim: it came from code
+// that noticed the cancellation itself and had more to say than the fact of it —
+// a batched apply names how many batches already ran, and on a real run those PRs
+// are open. Losing that to a generic word would be the more expensive silence.
+func interruptError(ctx context.Context, err error) error {
+	if err == nil || ctx.Err() == nil {
+		return err
+	}
+	if errors.Is(err, apply.ErrInterrupted) {
+		return err
+	}
+	return errors.New("interrupted")
+}
+
 func main() {
+	ctx, restoreSignals := interruptContext(context.Background())
 	root := newRootCmd()
-	cmd, err := root.ExecuteC()
-	os.Exit(reportExit(resolveQuiet(root, cmd, os.Args[1:]), err, os.Stderr))
+	cmd, err := root.ExecuteContextC(ctx)
+	// os.Exit skips defers, so restore explicitly before reporting.
+	restoreSignals()
+	os.Exit(reportExit(resolveQuiet(root, cmd, os.Args[1:]), interruptError(ctx, err), os.Stderr))
 }

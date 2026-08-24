@@ -17,6 +17,14 @@ import (
 // tokenEnv is the environment variable multi-gitter reads its GitHub PAT from.
 const tokenEnv = models.MultiGitterTokenEnvVar
 
+// ErrInterrupted marks a run stopped by cancellation rather than by a failure.
+//
+// It exists so the CLI can tell an error that already KNOWS it was interrupted —
+// and has something to add, like how much of the fleet a batched apply already
+// pushed — from a delegate that was simply killed and reports "signal: killed",
+// which says nothing useful. The CLI replaces the second and keeps the first.
+var ErrInterrupted = errors.New("interrupted")
+
 // multiGitterNeutralConfig is the config file goldfinger hands multi-gitter on
 // every run, and it is deliberately not empty.
 //
@@ -171,9 +179,26 @@ max-team-reviewers: 0
 output: "-"
 `
 
-// sleep pauses between batches. It is a package var so tests can stub it and not
-// actually wait.
-var sleep = time.Sleep
+// sleep pauses between batches, returning the context's error instead if the run
+// is cancelled first. It is a package var so tests can stub it and not actually
+// wait.
+//
+// Honouring the context matters more than it looks: --batch-pause exists to stay
+// under GitHub's secondary rate limit, so it is set to a minute or more, and a
+// plain time.Sleep would hold an interrupted run open for the rest of it. It used
+// not to matter because Ctrl-C killed the process outright; now that goldfinger
+// catches the signal to reap its delegates' process groups, every blocking step
+// has to honour cancellation itself or the interrupt appears to be ignored.
+var sleep = func(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // maxRepos caps how many repos we pass as repeated --repo flags. multi-gitter
 // has no repo-list-file input, so a very large set would risk an over-length
@@ -255,8 +280,20 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	batches := chunk(s.Repos, spec.BatchSize)
 	var result Result
 	for i, repos := range batches {
-		if i > 0 && spec.BatchPause > 0 {
-			sleep(spec.BatchPause)
+		if i > 0 {
+			if spec.BatchPause > 0 {
+				if err := sleep(ctx, spec.BatchPause); err != nil {
+					return result, interruptedAfter(i, len(batches), spec.DryRun)
+				}
+			}
+			// Checked again, and unconditionally: --batch-pause=0 skips the wait
+			// altogether, and even a wait that completed can race a signal that
+			// landed as the timer fired. Without this the next batch starts on a
+			// dead context — the delegate fails immediately, but with a generic
+			// error that says nothing about how much of the fleet already shipped.
+			if ctx.Err() != nil {
+				return result, interruptedAfter(i, len(batches), spec.DryRun)
+			}
 		}
 		sub := s
 		sub.Repos = repos
@@ -273,6 +310,31 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	return result, nil
 }
 
+// interruptedAfter reports an apply stopped between batches, naming how far the
+// fleet got. The count matters more than the word does, but it means two different
+// things and the message must not conflate them: after a real run those batches
+// have opened PRs that stopping goldfinger does not close, so the operator's next
+// move depends on knowing which repos already carry one; after a dry run nothing
+// was pushed, and the fact worth stating is that the digest covers part of the
+// selection — a partial digest read as a whole one would under-report the blast
+// radius of the live run it is meant to authorise.
+func interruptedAfter(done, total int, dryRun bool) error {
+	if dryRun {
+		return fmt.Errorf("%w after batch %d/%d — nothing was pushed; the digest covers those repos only", ErrInterrupted, done, total)
+	}
+	return fmt.Errorf("%w after batch %d/%d — those PRs are already open", ErrInterrupted, done, total)
+}
+
+// appendBatchOutput concatenates one batch's captured output onto the run's.
+//
+// It deliberately does NOT bound the total. The runner bounds each batch (see
+// cmd/exec.go: the tail, which is where multi-gitter's repo-counter block lands),
+// so the dominant term — one runaway change command — is already capped; what is
+// left grows with the batch COUNT, and tail-truncating here would drop whole
+// earlier batches' counter blocks, silently reporting their repos as "unknown".
+// A wrong digest is worse than a large one: the digest is what a human approves a
+// real run against. Bounding this properly means summarising each batch as it
+// finishes and merging digests rather than retaining raw bytes at all.
 func appendBatchOutput(dst, src []byte) []byte {
 	if len(src) == 0 {
 		return dst

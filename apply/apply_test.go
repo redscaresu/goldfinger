@@ -506,7 +506,7 @@ func repoFlags(args []string) []string {
 func TestApplyBatchesRunsAndPauses(t *testing.T) {
 	var pauses []time.Duration
 	orig := sleep
-	sleep = func(d time.Duration) { pauses = append(pauses, d) }
+	sleep = func(_ context.Context, d time.Duration) error { pauses = append(pauses, d); return nil }
 	t.Cleanup(func() { sleep = orig })
 
 	var mc multiCapture
@@ -529,7 +529,7 @@ func TestApplyBatchesRunsAndPauses(t *testing.T) {
 
 func TestApplyNoBatchIsSingleRun(t *testing.T) {
 	orig := sleep
-	sleep = func(time.Duration) { t.Fatal("no pause expected without batching") }
+	sleep = func(context.Context, time.Duration) error { t.Fatal("no pause expected without batching"); return nil }
 	t.Cleanup(func() { sleep = orig })
 
 	var mc multiCapture
@@ -539,9 +539,79 @@ func TestApplyNoBatchIsSingleRun(t *testing.T) {
 	assert.Len(t, repoFlags(mc.calls[0]), 5)
 }
 
+// TestApplyStopsAtTheBatchBoundaryOnCancel runs the REAL sleep — stubbing it would
+// test nothing here — and covers both shapes of the batch boundary.
+//
+// The boundary is the one place a batched apply is between child processes, so it
+// is the one place cancellation has to be noticed by hand. Before goldfinger caught
+// SIGINT this was invisible: Ctrl-C killed the process outright. Now the signal only
+// cancels the context, and each case fails differently if the boundary ignores it —
+// with a pause, the operator watches an interrupted run sit there until the timer
+// runs out (a fleet throttle sets minutes); without one, the next batch starts on a
+// dead context and fails with a generic delegate error that says nothing about how
+// much of the fleet already shipped. The hour-long pause is chosen so a plain
+// time.Sleep hangs the test to its watchdog rather than passing slowly.
+func TestApplyStopsAtTheBatchBoundaryOnCancel(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		pause time.Duration
+		live  bool
+		want  string
+	}{
+		{"dry run cancelled during the pause", time.Hour, false,
+			"interrupted after batch 1/3 — nothing was pushed; the digest covers those repos only"},
+		{"dry run cancelled with no pause to interrupt", 0, false,
+			"interrupted after batch 1/3 — nothing was pushed; the digest covers those repos only"},
+		// The live case is the one whose wording an operator acts on, and the two
+		// must not share a message: telling a dry run its PRs are open invents a
+		// blast radius, and telling a live run nothing was pushed hides one.
+		{"live run cancelled at the boundary", 0, true,
+			"interrupted after batch 1/3 — those PRs are already open"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			calls := 0
+			run := func(context.Context, string, []string, []string) ([]byte, error) {
+				calls++
+				cancel() // the operator hits Ctrl-C while the first batch is running
+				return []byte("batch one output\n"), nil
+			}
+			spec := baseSpec()
+			spec.BatchSize = 2
+			spec.BatchPause = tc.pause
+			if tc.live {
+				spec.DryRun = false
+				spec.Confirm = true
+			}
+
+			done := make(chan struct{})
+			var result Result
+			var err error
+			go func() {
+				defer close(done)
+				result, err = Apply(ctx, run, fiveRepoSelection(), spec, "t")
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the batch boundary ignored cancellation — an interrupted apply blocks for --batch-pause")
+			}
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrInterrupted, "the CLI keeps this message only if it is tagged as an interruption")
+			assert.Equal(t, tc.want, err.Error())
+			assert.Equal(t, 1, calls, "no batch may start after cancellation")
+			assert.Equal(t, "batch one output\n", string(result.Output),
+				"the interrupted run still reports what the batches that DID run produced")
+		})
+	}
+}
+
 func TestApplyBatchErrorReportsBatchNumber(t *testing.T) {
 	orig := sleep
-	sleep = func(time.Duration) {}
+	sleep = func(context.Context, time.Duration) error { return nil }
 	t.Cleanup(func() { sleep = orig })
 
 	calls := 0

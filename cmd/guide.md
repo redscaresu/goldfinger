@@ -225,8 +225,13 @@ SIGNING (--sign, REQUIRED — no default)
                      user.signingkey. "Verified" on GitHub only if that public
                      key is uploaded. Your gpg-agent must have the passphrase
                      cached for the whole run — a cold/headless agent can stall
-                     on per-commit pinentry, so warm it first. (--git-type=cmd
-                     runs `git commit` with no -S and no --no-gpg-sign, so your
+                     on per-commit pinentry, so warm it first. Warming is the
+                     fix, not a workaround: delegates run in their own process
+                     group (so an interrupted run reaps their git children), and
+                     a TERMINAL pinentry therefore cannot prompt — the run
+                     stalls instead of asking. A GUI pinentry (pinentry-mac,
+                     pinentry-gtk) is unaffected. (--git-type=cmd runs `git
+                     commit` with no -S and no --no-gpg-sign, so your
                      commit.gpgsign config is honoured — verified against
                      multi-gitter v0.63.1.)
   - --sign github : GitHub API push (multi-gitter --api-push) → signed by
@@ -439,6 +444,14 @@ MACHINE-READABLE OUTPUT
   {version, error, exitCode} under --quiet (the `error` surface in schema). A
   domain-signal exit (drift, a failed doctor check) prints nothing; the exit code
   carries it (0 ok / 1 domain outcome / 2 error).
+  Interrupting a run: Ctrl-C (or SIGTERM) cancels it and kills the delegate AND
+  everything the delegate spawned — ghorg's git children included — instead of
+  leaving them cloning into the workspace after goldfinger has exited. It reports
+  `interrupted` and exits 2: the run did not complete, so that is a failure, not a
+  domain outcome. A second Ctrl-C kills goldfinger outright, for the case where a
+  delegate refuses to die. An interrupted mirror leaves its partial workspace on
+  disk (goldfinger never deletes one) — re-running mirror makes a fresh snapshot
+  and `workspaces prune` clears the old ones.
 
 NOTES FOR AI AGENTS
   - The selection lockfile is JSON — read it directly for structured state.
