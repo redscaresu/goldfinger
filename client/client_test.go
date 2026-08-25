@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-github/v89/github"
 	"github.com/redscaresu/goldfinger/models"
@@ -15,15 +17,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestClient points a real go-github client at a test server.
+// newTestClient points a real go-github client at a test server, wired exactly
+// as New wires the production one.
 func newTestClient(t *testing.T, h http.Handler) *Client {
+	t.Helper()
+	return newTestClientWithTimeout(t, h, requestTimeout)
+}
+
+// newTestClientWithTimeout is newTestClient with the request bound shortened, so
+// a test can provoke a timeout without waiting for the production one.
+func newTestClientWithTimeout(t *testing.T, h http.Handler, timeout time.Duration) *Client {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	gh, err := github.NewClient(github.WithURLs(&base, nil))
+	c, err := newClient("test-token", timeout, github.WithURLs(&base, nil))
 	require.NoError(t, err)
-	return &Client{gh: gh}
+	return c
 }
 
 // repoJSON renders one repository object as the API would.
@@ -34,6 +44,168 @@ func repoJSON(owner, name string, topics []string, archived bool) string {
 	}
 	return fmt.Sprintf(`{"name":%q,"owner":{"login":%q},"clone_url":"https://github.com/%s/%s.git","default_branch":"main","topics":[%s],"archived":%t}`,
 		name, owner, owner, name, strings.Join(quoted, ","), archived)
+}
+
+// Every exported call, not just a representative one. go-github dispatches some
+// methods through http.Client.Do and others straight at the transport, and only
+// the first kind honours http.Client.Timeout — a difference invisible from the
+// call site, which is how the highest-volume call (BranchExists, via
+// `select --branch-presence`) came to be the one left unbounded. So the bound is
+// asserted per method: a new method reaching for another bypassing helper fails
+// here rather than shipping an unbounded request nobody thought to check.
+func TestEveryCallIsBoundedWhenTheServerNeverAnswers(t *testing.T) {
+	cases := []struct {
+		name string
+		// login pre-resolves the authenticated user, so a call that would
+		// otherwise stall on /user inside ensureLogin stalls on its own
+		// endpoint instead. Verify leaves it empty — /user is its endpoint.
+		login string
+		// respond answers the lookups a call makes on its way to the request
+		// under test, so the row stalls on the one it is named for rather than
+		// on a prerequisite. Everything else stalls.
+		respond map[string]string
+		// stallsOn is the endpoint the row must actually reach, asserted so a
+		// row cannot quietly degrade into re-testing a prerequisite: before
+		// this was checked, the ListRepos row stalled inside the owner lookup
+		// and never issued a listing request at all.
+		stallsOn string
+		call     func(context.Context, *Client) error
+	}{
+		{name: "Verify", stallsOn: "/user", call: func(ctx context.Context, c *Client) error {
+			_, err := c.Verify(ctx)
+			return err
+		}},
+		// The three dispatches of ListRepos are separate go-github methods, so
+		// each is its own row: a bypassing helper could appear in any one of
+		// them. Own repos short-circuits the owner lookup by matching login.
+		{name: "ListRepos/ownRepos", login: "acme", stallsOn: "/user/repos", call: func(ctx context.Context, c *Client) error {
+			_, _, err := c.ListRepos(ctx, "acme")
+			return err
+		}},
+		{
+			name:     "ListRepos/org",
+			login:    "octobot",
+			respond:  map[string]string{"/users/acme": `{"login":"acme","type":"Organization"}`},
+			stallsOn: "/orgs/acme/repos",
+			call: func(ctx context.Context, c *Client) error {
+				_, _, err := c.ListRepos(ctx, "acme")
+				return err
+			},
+		},
+		{
+			name:     "ListRepos/user",
+			login:    "octobot",
+			respond:  map[string]string{"/users/acme": `{"login":"acme","type":"User"}`},
+			stallsOn: "/users/acme/repos",
+			call: func(ctx context.Context, c *Client) error {
+				_, _, err := c.ListRepos(ctx, "acme")
+				return err
+			},
+		},
+		{name: "OwnerType", login: "octobot", stallsOn: "/users/acme", call: func(ctx context.Context, c *Client) error {
+			_, err := c.OwnerType(ctx, "acme")
+			return err
+		}},
+		{name: "GetRepo", login: "octobot", stallsOn: "/repos/acme/one", call: func(ctx context.Context, c *Client) error {
+			_, _, err := c.GetRepo(ctx, "acme", "one")
+			return err
+		}},
+		{name: "BranchExists", login: "octobot", stallsOn: "/repos/acme/one/branches/dev", call: func(ctx context.Context, c *Client) error {
+			_, err := c.BranchExists(ctx, "acme", "one", "dev")
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			for path, body := range tc.respond {
+				mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
+					fmt.Fprint(w, body)
+				})
+			}
+			var mu sync.Mutex
+			var stalled []string
+			// Everything not answered above stalls: the server accepts the
+			// request and then never replies, which is the failure a timeout
+			// exists for, as distinct from a refused connection. It releases
+			// when the client hangs up, and on a timer regardless, so a
+			// regression here fails slowly instead of deadlocking the test
+			// server's shutdown (httptest.Server.Close waits for handlers).
+			mux.HandleFunc("/", func(_ http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				stalled = append(stalled, r.URL.Path)
+				mu.Unlock()
+				select {
+				case <-r.Context().Done():
+				case <-time.After(30 * time.Second):
+				}
+			})
+			c := newTestClientWithTimeout(t, mux, 100*time.Millisecond)
+			c.login = tc.login
+
+			start := time.Now()
+			err := tc.call(context.Background(), c)
+
+			require.Error(t, err, "a request that never gets a response must fail, not hang")
+			assert.Less(t, time.Since(start), 10*time.Second,
+				"the request should have been abandoned at its deadline rather than left to stall")
+
+			// Eventually, not an immediate read: the client gives up 100ms in,
+			// which on a loaded runner can be before the server's handler
+			// goroutine has recorded the path it is already blocked on. Waiting
+			// for the record costs nothing when it is already there and removes
+			// the only flake vector here, without weakening the assertion.
+			require.Eventually(t, func() bool {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(stalled) > 0
+			}, 5*time.Second, 10*time.Millisecond, "the call never reached the server at all")
+
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, []string{tc.stallsOn}, stalled,
+				"this row must reach and stall on the request it is named for, not on a prerequisite")
+		})
+	}
+}
+
+// The deadline has to outlive the round trip that created it. RoundTrip returns
+// as soon as the response headers are in, while the body is still arriving, so a
+// transport that cancelled its context on the way out would truncate a perfectly
+// good response into a spurious error — and only for responses big or slow
+// enough not to be already buffered, which is to say only in production, where a
+// 100-repo page is far larger than a test's. The handler below reproduces that
+// by flushing its headers and then pausing before the body.
+func TestAResponseBodyOutlivesTheRoundTripThatFetchedIt(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/user", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		require.True(t, ok, "the test server must support flushing for this to prove anything")
+		flusher.Flush() // headers are out, so RoundTrip returns about here
+		time.Sleep(50 * time.Millisecond)
+		fmt.Fprint(w, `{"login":"octobot"}`)
+	})
+	c := newTestClient(t, mux)
+
+	login, err := c.Verify(context.Background())
+
+	require.NoError(t, err, "the body must survive RoundTrip returning — its deadline runs until Close")
+	assert.Equal(t, "octobot", login)
+}
+
+// New is the only constructor production uses and it takes no arguments beyond
+// the token, so nothing else can pin which timeout it picks: a New that quietly
+// stopped passing requestTimeout would restore the unbounded default with every
+// other test still green. Reading the value back off the built client also pins
+// that it survives WithAuthToken's transport wrapping.
+func TestNewAppliesTheRequestTimeout(t *testing.T) {
+	c, err := New("t0ken")
+	require.NoError(t, err)
+
+	assert.Equal(t, requestTimeout, c.gh.Client().Timeout)
 }
 
 func TestVerifyReturnsLogin(t *testing.T) {
