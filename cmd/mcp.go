@@ -302,6 +302,7 @@ func mcpDoctorHandler(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (
 	deps := doctorDeps{
 		resolveToken: resolveToken,
 		verifyLogin:  verifyLoginWithClient,
+		readQuota:    readQuotaWithClient,
 		probeTool:    probeToolDefault,
 		loadConfig:   loadGitConfig,
 	}

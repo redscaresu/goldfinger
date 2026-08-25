@@ -42,6 +42,26 @@ const doctorProbeTimeout = 5 * time.Second
 // safe if its output drifts), so warning on every future release would be noise.
 const multiGitterKnownGoodFloor = "0.63.1"
 
+// quotaLowWater is the remaining-core-request count below which doctor warns
+// that a run may not have room to finish. The scale comes from goldfinger's own
+// shape: `select --branch-presence` spends one request per repo per branch, and
+// mirror and apply then spend their own against the same hourly budget, so a
+// fleet-scale campaign over a mid-sized org is comfortably a three-figure number
+// of requests. Below a hundred left, a real run can plausibly exhaust the budget
+// mid-flight, which is worth saying before it starts rather than after.
+//
+// It is a warn, never a fail. doctor's fail means goldfinger cannot function —
+// no token, no child tool — and a budget merely running low is not that: it is
+// temporary, the check prints when it lifts, and a limit met mid-run is either
+// waited out and retried or, where GitHub asks for longer than the client will
+// hold a run open, ended with when to rerun. Exit 1 here would turn a preflight
+// into a clock-watcher.
+//
+// A budget already spent is a different thing, and doctor does fail on it — but
+// from the auth check above, which is where it surfaces, since every call
+// including the login is refused. This check's job there is to say when it lifts.
+const quotaLowWater = 100
+
 // semverRE extracts a major.minor.patch triple from a tool's version string
 // (e.g. "multi-gitter version 0.63.1"), ignoring any surrounding text and a
 // leading "v". A best-effort match is enough for a floor comparison.
@@ -70,6 +90,7 @@ type doctorReport struct {
 type doctorDeps struct {
 	resolveToken func(ctx context.Context) (token, source string, err error)
 	verifyLogin  func(ctx context.Context, token string) (login string, err error)
+	readQuota    func(ctx context.Context, token string) (client.Quota, error)
 	probeTool    func(ctx context.Context, name string) (path, version string, ok bool)
 	loadConfig   func() gitConfig
 }
@@ -97,6 +118,7 @@ func newDoctorCmd() *cobra.Command {
 			deps := doctorDeps{
 				resolveToken: resolveToken,
 				verifyLogin:  verifyLoginWithClient,
+				readQuota:    readQuotaWithClient,
 				probeTool:    probeToolDefault,
 				loadConfig:   loadGitConfig,
 			}
@@ -164,14 +186,29 @@ func authChecks(ctx context.Context, deps doctorDeps) []doctorCheck {
 
 	var checks []doctorCheck
 	login, verr := deps.verifyLogin(ctx, token)
-	if verr != nil {
+	// A rate limit is not a verdict on the token, and saying it is sends an
+	// operator to rotate a PAT that was never the problem. It is also the likeliest
+	// moment for doctor to be run at all — a fleet run has just died on a limit and
+	// the question is when it lifts — so this branch answers that instead, and lets
+	// the quota check below run rather than reporting the limit as an auth failure
+	// twice. Still a fail: until the window rolls over, goldfinger cannot do
+	// anything, which is what doctor's fail means.
+	switch {
+	case verr != nil && client.IsRateLimited(verr):
+		checks = append(checks, doctorCheck{
+			Check:  "auth",
+			Status: statusFail,
+			Detail: fmt.Sprintf("token from %s could not be verified — GitHub is rate limiting it, not rejecting it: %v", source, verr),
+			Fix:    "wait for the reset reported below and rerun; the token itself needs no change",
+		})
+	case verr != nil:
 		checks = append(checks, doctorCheck{
 			Check:  "auth",
 			Status: statusFail,
 			Detail: fmt.Sprintf("token from %s did not verify: %v", source, verr),
 			Fix:    "check the token is valid and has repo scope",
 		})
-	} else {
+	default:
 		checks = append(checks, doctorCheck{
 			Check:  "auth",
 			Status: statusOK,
@@ -193,7 +230,54 @@ func authChecks(ctx context.Context, deps doctorDeps) []doctorCheck {
 			Detail: "no ambient token shadowing detected",
 		})
 	}
-	return checks
+	return append(checks, quotaCheck(ctx, deps, token, verr == nil || client.IsRateLimited(verr)))
+}
+
+// quotaCheck reports how much of the token's hourly REST budget is left, so an
+// operator sees whether a fleet-scale run has room before starting one rather
+// than discovering it partway through.
+//
+// Wherever a token was resolved it is emitted, including when it could not be
+// answered, so a machine consumer reading --json never has to tell "no problem"
+// from "not reported". (With no token at all the whole auth block short-circuits
+// to a single fail, this check included — there is nothing to report against.)
+// askable says whether there is anything to be learned by asking. A token GitHub
+// rejected has nothing to ask about, and asking would only restate the failure
+// already above it as a second one. A token GitHub rate limited is the opposite
+// case: the auth check failed for want of this very answer, and the endpoint that
+// carries it is not billed against the limit blocking everything else, so it
+// answers when nothing else will.
+func quotaCheck(ctx context.Context, deps doctorDeps, token string, askable bool) doctorCheck {
+	const name = "rate-limit"
+	if !askable {
+		return doctorCheck{
+			Check:  name,
+			Status: statusInfo,
+			Detail: "not checked — the token did not authenticate",
+		}
+	}
+	q, err := deps.readQuota(ctx, token)
+	if err != nil {
+		return doctorCheck{
+			Check:  name,
+			Status: statusWarn,
+			Detail: fmt.Sprintf("could not read the token's API quota: %v", err),
+		}
+	}
+
+	detail := fmt.Sprintf("%d of %d core API requests remaining", q.Remaining, q.Limit)
+	if !q.Reset.IsZero() {
+		detail += fmt.Sprintf(" (resets %s)", q.Reset.UTC().Format(time.RFC3339))
+	}
+	if q.Remaining >= quotaLowWater {
+		return doctorCheck{Check: name, Status: statusOK, Detail: detail}
+	}
+	return doctorCheck{
+		Check:  name,
+		Status: statusWarn,
+		Detail: detail + fmt.Sprintf(" — below %d, and a fleet-scale run spends roughly one request per repo, so it may exhaust the budget mid-run", quotaLowWater),
+		Fix:    "wait for the reset above, or use a token with more headroom",
+	}
 }
 
 // toolCheck reports whether a delegated child tool is on PATH, with its version
@@ -413,6 +497,20 @@ func verifyLoginWithClient(ctx context.Context, token string) (string, error) {
 		return "", err
 	}
 	return c.Verify(ctx)
+}
+
+// readQuotaWithClient is the production quota probe: it asks GitHub's rate-limit
+// endpoint what the token has left. That endpoint is not billed against the
+// limit it reports, so the reading does not itself consume the budget it is
+// reporting on — the number doctor prints is not made worse by doctor asking for
+// it. It is not entirely free (GitHub counts it against the secondary limit),
+// which is why it stays one call inside a preflight rather than anything polled.
+func readQuotaWithClient(ctx context.Context, token string) (client.Quota, error) {
+	c, err := client.New(token)
+	if err != nil {
+		return client.Quota{}, err
+	}
+	return c.RemainingQuota(ctx)
 }
 
 // probeToolDefault reports whether name is on PATH and, best-effort, its version.

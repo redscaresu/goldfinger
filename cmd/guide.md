@@ -249,6 +249,16 @@ PREFLIGHT (doctor)
                      (authenticated as <login> via GOLD_FINGER_PAT / gh session).
     - auth-shadow  : warns if an ambient GITHUB_TOKEN/GH_TOKEN may be shadowing
                      your gh login (the wrong-identity footgun above).
+    - rate-limit   : how much of the token's hourly REST budget is left, and when
+                     it resets. `select --branch-presence` spends one request per
+                     repo per branch, so a fleet-scale run is a three-figure number
+                     of requests; under 100 remaining warns that a run could
+                     exhaust the budget mid-flight. Advisory, never a fail — it is
+                     temporary, and a limit met mid-run is waited out and retried,
+                     or where GitHub asks for longer than a minute, ends the run
+                     telling you when to rerun. Asking costs nothing of what it
+                     measures: GitHub does not bill the rate-limit endpoint
+                     against the limit it reports.
     - ghorg /      : each child tool's PATH location + version, or a fail with an
       multi-gitter   install hint if missing. multi-gitter is also checked against
                      goldfinger's known-good version floor (currently 0.63.1, the

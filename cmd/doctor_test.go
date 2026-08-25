@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/go-github/v89/github"
+	"github.com/redscaresu/goldfinger/client"
 	"github.com/redscaresu/goldfinger/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +30,9 @@ func okDeps() doctorDeps {
 		},
 		verifyLogin: func(context.Context, string) (string, error) {
 			return "octocat", nil
+		},
+		readQuota: func(context.Context, string) (client.Quota, error) {
+			return client.Quota{Limit: 5000, Remaining: 4900, Reset: time.Unix(1700000000, 0)}, nil
 		},
 		probeTool: func(_ context.Context, name string) (string, string, bool) {
 			return "/usr/local/bin/" + name, name + " v1.2.3", true
@@ -383,6 +391,104 @@ func TestVersionFloorWarning(t *testing.T) {
 	}
 }
 
+// The quota check exists so an operator learns a fleet-scale run has no room
+// BEFORE starting one, rather than partway through. Each case pins one of the
+// answers it can give, and that the check itself never fails a run: doctor's fail
+// means goldfinger cannot function, and a budget running low is not that — it is
+// temporary, the check prints when it lifts, and the client waits out a limit it
+// meets mid-run. A budget already spent does fail, but from the auth check, which
+// is where every call including the login is refused; this check's job there is
+// still to say when it lifts.
+func TestRunDoctorQuotaCheck(t *testing.T) {
+	reset := time.Date(2026, 8, 25, 14, 30, 0, 0, time.UTC)
+
+	t.Run("ample quota reports the headroom", func(t *testing.T) {
+		out, _, err := runDoctorCapture(t, okDeps(), false)
+		require.NoError(t, err)
+		assert.Contains(t, out, "[ok] rate-limit: 4900 of 5000 core API requests remaining")
+	})
+
+	t.Run("a nearly spent quota warns without failing the run", func(t *testing.T) {
+		deps := okDeps()
+		deps.readQuota = func(context.Context, string) (client.Quota, error) {
+			return client.Quota{Limit: 5000, Remaining: quotaLowWater - 1, Reset: reset}, nil
+		}
+		out, _, err := runDoctorCapture(t, deps, false)
+
+		require.NoError(t, err, "an exhausted quota is temporary — advisory, never a failed preflight")
+		assert.Contains(t, out, "[warn] rate-limit: 99 of 5000 core API requests remaining")
+		assert.Contains(t, out, "2026-08-25T14:30:00Z", "the operator needs the reset time to know when to rerun")
+	})
+
+	t.Run("a quota that cannot be read warns rather than inventing a number", func(t *testing.T) {
+		deps := okDeps()
+		deps.readQuota = func(context.Context, string) (client.Quota, error) {
+			return client.Quota{}, errors.New("read API rate limit: 502 Bad Gateway")
+		}
+		out, _, err := runDoctorCapture(t, deps, false)
+
+		require.NoError(t, err)
+		assert.Contains(t, out, "[warn] rate-limit: could not read")
+		assert.NotContains(t, out, "0 of 0", "an unreadable quota must not render as an exhausted one")
+	})
+
+	// A token that did not authenticate has no quota to report, and asking would
+	// only restate the auth failure as a second one. The check is still emitted,
+	// so the set of checks in --json is the same on every run.
+	t.Run("a token that did not verify is reported as unchecked, and not asked about", func(t *testing.T) {
+		deps := okDeps()
+		deps.verifyLogin = func(context.Context, string) (string, error) {
+			return "", errors.New("401 Bad credentials")
+		}
+		var asked bool
+		deps.readQuota = func(context.Context, string) (client.Quota, error) {
+			asked = true
+			return client.Quota{}, nil
+		}
+		out, _, err := runDoctorCapture(t, deps, false)
+
+		assert.Equal(t, 1, exitCode(err), "the auth failure still fails the run")
+		assert.Contains(t, out, "[info] rate-limit: not checked")
+		assert.False(t, asked, "there is nothing to ask about with a token that does not authenticate")
+	})
+
+	// The opposite case, and the likeliest reason doctor is being run at all: a
+	// fleet run has just died on a rate limit and the question is when it lifts.
+	// The login is refused along with everything else, so the naive reading is
+	// "the token did not authenticate" — which would send an operator to rotate a
+	// PAT that was never the problem, and suppress the one answer they came for.
+	//
+	// The quota endpoint is not billed against the limit blocking the rest, so it
+	// still answers. Asking it is the whole point of the case.
+	t.Run("a token GitHub rate limited is still asked for its reset, and not blamed", func(t *testing.T) {
+		deps := okDeps()
+		// Built with the response go-github renders the message from — a bare
+		// literal panics in Error(), which fmt hides in the output and would
+		// leave this passing on a fixture unlike anything production produces.
+		limited := &github.RateLimitError{
+			Message: "API rate limit exceeded",
+			Rate:    github.Rate{Limit: 5000, Remaining: 0, Reset: github.Timestamp{Time: reset}},
+			Response: &http.Response{
+				StatusCode: http.StatusForbidden,
+				Request:    &http.Request{Method: http.MethodGet, URL: &url.URL{Scheme: "https", Host: "api.github.com", Path: "/user"}},
+			},
+		}
+		deps.verifyLogin = func(context.Context, string) (string, error) {
+			return "", fmt.Errorf("authenticate with GOLD_FINGER_PAT: %w", limited)
+		}
+		deps.readQuota = func(context.Context, string) (client.Quota, error) {
+			return client.Quota{Limit: 5000, Remaining: 0, Reset: reset}, nil
+		}
+		out, _, err := runDoctorCapture(t, deps, false)
+
+		assert.Equal(t, 1, exitCode(err), "nothing works until the window rolls over, which is what fail means")
+		assert.Contains(t, out, "rate limiting it, not rejecting it")
+		assert.NotContains(t, out, "check the token is valid", "the token is not the problem and must not be blamed")
+		assert.Contains(t, out, "[warn] rate-limit: 0 of 5000 core API requests remaining")
+		assert.Contains(t, out, "2026-08-25T14:30:00Z", "when it lifts is the answer the operator came for")
+	})
+}
+
 func TestDoctorReportContainsAllChecks(t *testing.T) {
 	checks := gatherDoctorChecks(context.Background(), okDeps())
 	names := make([]string, 0, len(checks))
@@ -390,7 +496,7 @@ func TestDoctorReportContainsAllChecks(t *testing.T) {
 		names = append(names, c.Check)
 	}
 	joined := strings.Join(names, ",")
-	for _, want := range []string{"auth", "auth-shadow", "ghorg", "multi-gitter", "git-identity", "signing"} {
+	for _, want := range []string{"auth", "auth-shadow", "rate-limit", "ghorg", "multi-gitter", "git-identity", "signing"} {
 		assert.Contains(t, joined, want)
 	}
 }
