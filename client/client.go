@@ -7,8 +7,10 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v89/github"
 	"github.com/redscaresu/goldfinger/models"
@@ -17,10 +19,43 @@ import (
 // perPage is the max page size the REST API allows, minimising round-trips.
 const perPage = 100
 
-// Client is a thin, read-only GitHub API client for resolving a selection. Its
-// call volume is tiny (one auth check, one owner lookup, one page per 100
-// repos), so it makes no attempt at rate-limit backoff — a limit error, if it
-// ever occurred, surfaces to the caller rather than being retried.
+// requestTimeout bounds a single API request end to end — dial, TLS handshake,
+// request write, response headers and body.
+//
+// Without it there is no bound at all: go-github builds a bare &http.Client{},
+// whose zero Timeout means "wait forever", and the root context threaded from
+// main carries no deadline of its own — it is cancelled by SIGINT/SIGTERM and
+// nothing else. So a connection that stalls mid-request (a silently dropped TCP
+// flow, a captive portal, a VPN flap) hung the run until an operator noticed and
+// pressed Ctrl-C. This is deliberately fixed before any retry work: retrying on
+// top of an unbounded request multiplies the hang rather than curing it.
+//
+// A whole-request wall clock is the right shape here only because nothing this
+// client fetches streams — every response is one small JSON document, the
+// largest being a 100-repo page — so there is no legitimate slow-but-progressing
+// request for it to strangle. It is per request, not per run, so each retry
+// added later starts a fresh budget.
+//
+// The asymmetry picks the value. Too generous costs extra waiting on a request
+// that is almost certainly already dead; too tight costs a failed run that would
+// have succeeded, paid on the success path and paid worst by the slowest links.
+// 30s does not guarantee nothing legitimate is cut off — a response genuinely
+// still arriving at 31s would be — it is a bet that for one small JSON document,
+// thirty seconds of elapsed time means a stall rather than progress. It is
+// roughly fifty times the latency any of these calls should show. The busiest
+// path, `select --branch-presence` (one call per repo per branch), returns on
+// the first error rather than continuing, so even a total outage costs one
+// timeout rather than one per repo.
+//
+// It is applied twice, at two different layers, because neither layer catches
+// everything the other does — see the transport wiring in newClient.
+const requestTimeout = 30 * time.Second
+
+// Client is a thin, read-only GitHub API client for resolving a selection. Most
+// of its work is a handful of calls (one auth check, one owner lookup, one page
+// per 100 repos), but `select --branch-presence` adds one per repo per branch,
+// so a large org can run to hundreds. It makes no attempt at rate-limit backoff:
+// a limit error surfaces to the caller rather than being retried.
 type Client struct {
 	gh    *github.Client
 	login string // authenticated user login, resolved by Verify
@@ -28,11 +63,97 @@ type Client struct {
 
 // New builds a Client authenticated with the given PAT.
 func New(token string) (*Client, error) {
-	gh, err := github.NewClient(github.WithAuthToken(token))
+	return newClient(token, requestTimeout)
+}
+
+// newClient holds all of the wiring, so New is only a choice of timeout and
+// tests exercise the real construction path rather than a parallel one that
+// could drift from it. extra is for a test's base URL override; production has
+// none.
+func newClient(token string, timeout time.Duration, extra ...github.ClientOptionsFunc) (*Client, error) {
+	opts := append([]github.ClientOptionsFunc{
+		github.WithAuthToken(token),
+		github.WithTimeout(timeout),
+		// The second half of the bound, and the half that covers this package's
+		// highest-volume call. github.WithTimeout sets http.Client.Timeout,
+		// which only reaches requests dispatched through http.Client.Do — and
+		// some go-github methods are not. GetBranch (repos.go) goes via
+		// roundTripWithOptionalFollowRedirect, which calls
+		// c.client.Transport.RoundTrip directly (github.go), skipping the
+		// http.Client layer and every deadline living on it. BranchExists is
+		// that method, and `select --branch-presence` calls it once per repo per
+		// branch — so the one path issuing hundreds of requests was the one path
+		// a client-level timeout left unbounded.
+		//
+		// A round trip is the narrowest point every request passes through,
+		// whichever layer above dispatched it, so bounding there closes that by
+		// construction rather than by inspection.
+		//
+		// The two are complementary rather than redundant, and they divide by
+		// path. On a bypassing path this transport is the only bound there is.
+		// On an http.Client.Do path both apply and they differ over redirects: a
+		// per-round-trip deadline gives every hop its own, whereas
+		// http.Client.Timeout is a single budget across the whole chain — so the
+		// pair gives Do calls an end-to-end bound the transport alone would not.
+		// A redirect chain on a bypassing path would still be bounded only per
+		// hop, but reaching one needs a caller passing a nonzero maxRedirects,
+		// and BranchExists, the only bypassing call here, passes 0.
+		github.WithTransport(&deadlineTransport{base: http.DefaultTransport, timeout: timeout}),
+	}, extra...)
+
+	gh, err := github.NewClient(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("build GitHub client: %w", err)
 	}
 	return &Client{gh: gh}, nil
+}
+
+// deadlineTransport gives every round trip its own deadline, derived from the
+// request's context so cancelling the run still wins.
+type deadlineTransport struct {
+	base    http.RoundTripper
+	timeout time.Duration
+}
+
+func (t *deadlineTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(req.Context(), t.timeout)
+	// RoundTrip must not mutate the request it is given; WithContext shallow-copies.
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	// The deadline has to outlive RoundTrip, because the body is streamed and
+	// read afterwards — cancelling here would truncate a good response into a
+	// spurious error. So cancel is handed to Close instead.
+	//
+	// That is best effort rather than a guarantee, and deliberately so. On a
+	// non-2xx response dispatched through Do, go-github's CheckResponse reads
+	// the error body and then swaps r.Body for a NopCloser over the bytes it
+	// read, discarding this wrapper before anything closes it — so cancel never
+	// runs and the context lives out its deadline. (The bypassing paths do not
+	// go through CheckResponse and do close this wrapper.) The fallback is the
+	// design: an uncancelled context still releases itself when the deadline
+	// lapses, so the worst case is a leak bounded by timeout rather than a
+	// permanent one. net/http reaches for the same shape to clean up after
+	// RoundTrip returns — Client.Timeout hangs its cleanup off a response-body
+	// wrapper too (cancelTimerBody, client.go) — and loses it to the same swap,
+	// so a body wrapper being best effort is what the standard library settles
+	// for as well.
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+// cancelOnClose releases a request's context once its body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnClose) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel() // context.CancelFunc is idempotent, so a double Close is safe.
+	return err
 }
 
 // Verify confirms the token works and returns the authenticated user's login.
