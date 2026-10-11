@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/redscaresu/goldfinger/actions/workflows/ci.yml/badge.svg)](https://github.com/redscaresu/goldfinger/actions/workflows/ci.yml)
 [![coverage](https://raw.githubusercontent.com/redscaresu/goldfinger/badges/coverage.svg)](https://github.com/redscaresu/goldfinger/actions/workflows/ci.yml)
-[![zizmor](https://github.com/redscaresu/goldfinger/actions/workflows/zizmor.yml/badge.svg)](https://github.com/redscaresu/goldfinger/actions/workflows/zizmor.yml)
+[![Security](https://github.com/redscaresu/goldfinger/actions/workflows/security.yml/badge.svg)](https://github.com/redscaresu/goldfinger/actions/workflows/security.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/redscaresu/goldfinger/badge)](https://scorecard.dev/viewer/?uri=github.com/redscaresu/goldfinger)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13997/badge)](https://www.bestpractices.dev/projects/13997)
 [![SLSA 3](https://img.shields.io/badge/SLSA-Level_3-green)](https://slsa.dev/spec/v1.0/levels#build-l3)
