@@ -8,7 +8,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
+
+// maxCapturedOutput bounds how much delegate output a runner RETAINS, so a chatty
+// or runaway child cannot balloon goldfinger's memory with the size of the fleet.
+// The tail is what carries a final status line or error — multi-gitter prints its
+// repo-counter block last — so the buffer keeps the last maxCapturedOutput bytes
+// and drops the oldest. It bounds only the retained copy; a streaming runner still
+// tees every byte to the operator's terminal live.
+const maxCapturedOutput = 1 << 20 // 1 MiB
+
+// killGraceDelay bounds how long Wait blocks before os/exec force-closes the
+// child's pipes: after context-cancellation, capping the time a delegate ignoring
+// SIGKILL can keep a cancelled run from returning; and after a normal exit, capping
+// a grandchild that outlived its parent while still holding the output pipe open.
+// Without it that second case blocks Wait for as long as the grandchild lives.
+const killGraceDelay = 5 * time.Second
 
 // execRun is the real command runner passed to the mirror/apply wrappers. It
 // streams the child tool's output straight through so the user sees ghorg's and
@@ -30,8 +46,33 @@ func execRunToWriter(ctx context.Context, name string, args, env []string, w io.
 	c.Env = env
 	c.Stdout = w
 	c.Stderr = w
-	c.Stdin = os.Stdin
+	setDelegateLifecycle(c)
 	return c.Run()
+}
+
+// setDelegateLifecycle applies the process-lifecycle guards every delegate run
+// needs, on the CLI as much as under MCP. Keeping them in one function is the
+// point: the CLI runners and the MCP runners drifted once already, with only the
+// latter hardened.
+//
+//   - The child runs in its own process group, and cancelling the context kills
+//     that whole group (see setProcessGroup). Delegates spawn children — ghorg
+//     shells out to git — so killing only the direct child would orphan
+//     grandchildren that keep cloning and writing after goldfinger has exited.
+//   - Wait is bounded by killGraceDelay, so a stuck child cannot hang the run
+//     indefinitely after cancellation.
+//   - Stdin is nil (/dev/null), NOT the operator's terminal. This one is a
+//     consequence of the first: a child in its own process group is no longer the
+//     terminal's foreground group, so reading an inherited TTY raises SIGTTIN and
+//     STOPS it — which presents as a hang. Nothing goldfinger drives reads stdin:
+//     multi-gitter never wires it (so neither does the change command it runs),
+//     and ghorg's only prompt is on the prune path, whose env knobs mirror scrubs
+//     (models/mirror ghorg drop list). Should a delegate ever prompt anyway,
+//     /dev/null answers with EOF — its safe default — instead of wedging.
+func setDelegateLifecycle(c *exec.Cmd) {
+	c.Stdin = nil
+	setProcessGroup(c)
+	c.WaitDelay = killGraceDelay
 }
 
 // execApplyRun is the apply-specific runner. Dry-runs are captured so goldfinger
@@ -50,16 +91,101 @@ func execApplyRunToWriter(ctx context.Context, name string, args, env []string, 
 		return nil, execRunToWriter(ctx, name, args, env, w)
 	}
 
-	var buf bytes.Buffer
-	combined := io.MultiWriter(w, &buf)
+	// Only the retained copy is bounded — w still receives every byte live, so the
+	// operator watching the run sees the whole thing; it is the in-memory copy that
+	// must not grow with fleet size × how chatty the change command is.
+	buf := &boundedBuffer{limit: maxCapturedOutput}
+	// Same writer for both streams: os/exec dedups it to one pipe and one copier
+	// goroutine, so there is no concurrent write to boundedBuffer.
+	combined := io.MultiWriter(w, buf)
 	c := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: see execRun — controlled delegate invocation, not external input.
 	c.Env = env
 	c.Stdout = combined
 	c.Stderr = combined
-	c.Stdin = os.Stdin
+	setDelegateLifecycle(c)
 	err := c.Run()
-	return buf.Bytes(), err
+	return capturedOutput(buf), err
 }
+
+// capturedOutput returns the retained bytes, prefixed with a marker whenever older
+// output was dropped. The marker exists because apply prints this buffer to a file
+// it labels "full run output": a silently tail-truncated log would make that label
+// a lie, and an operator reading it for a repo that never appears could not tell a
+// dropped line from a repo multi-gitter never reported.
+//
+// Both steps below defend the same thing — that truncation may destroy information
+// but must never MANUFACTURE any. What reads this buffer is apply/dryrun.go's
+// parser, and its grammar is positional: a line ending in ":" is a result-section
+// header, and the indented lines under it take that section's status.
+//
+//   - The fragment left of the line truncation cut through is discarded. Half a
+//     line is not data: it can end in ":" where the whole line did not, inventing a
+//     section header out of some chatty change-command output. The repos listed
+//     under it would then be reported as errors, with the fragment as the reason —
+//     and because a real header later in the tail still sets the parser's
+//     "recognised format" flag, the digest would look parseable and the misreport
+//     would be silent.
+//   - The marker itself ends in "." for the same reason. Once the fragment is gone
+//     the tail can legitimately begin with a section's indented repo lines, its
+//     header having been the discarded fragment — at which point the marker is the
+//     first header-shaped line the parser meets. Ending it in ":" would bucket those
+//     repos under the marker text; ending it in "." leaves them "unknown", which is
+//     the truth.
+//
+// A test pins each (TestTruncationNeverManufacturesAResultSectionHeader and
+// TestTruncationMarkerCannotBecomeAResultSectionHeader).
+func capturedOutput(buf *boundedBuffer) []byte {
+	out := buf.Bytes()
+	if !buf.truncated {
+		return out
+	}
+	if nl := bytes.IndexByte(out, '\n'); nl >= 0 {
+		out = out[nl+1:]
+	} else {
+		out = nil // the whole retained tail is one unterminated fragment
+	}
+	marker := fmt.Sprintf("[goldfinger] earlier output dropped — retained the last %d bytes of a longer run.\n", buf.limit)
+	return append([]byte(marker), out...)
+}
+
+// boundedBuffer is an io.Writer that retains only the last limit bytes written, so
+// unbounded delegate output cannot exhaust memory. It records whether earlier bytes
+// were dropped. It is not safe for concurrent writers, which is fine: its callers
+// point both child streams at one instance and os/exec serialises them through a
+// single copier.
+//
+// redact, when set, is applied to the whole buffer immediately before old bytes are
+// dropped. This is what makes secret-masking robust against truncation: a token
+// that lands across the drop boundary would otherwise lose its front half to
+// truncation and survive as an unmaskable fragment. Redacting while the token is
+// still whole turns it into the fixed marker first, so truncation can only ever cut
+// a marker, never split a live secret. Only the MCP runner sets it (see mcpRun);
+// the CLI runners write the delegate's own output back to the operator's terminal,
+// which already saw it live.
+type boundedBuffer struct {
+	limit     int
+	redact    func([]byte) []byte
+	buf       []byte
+	truncated bool
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	b.buf = append(b.buf, p...)
+	if b.limit > 0 && len(b.buf) > b.limit {
+		if b.redact != nil {
+			b.buf = b.redact(b.buf)
+		}
+		// Redaction shrinks the marker (< the token), so re-check before slicing.
+		if len(b.buf) > b.limit {
+			b.truncated = true
+			b.buf = b.buf[len(b.buf)-b.limit:]
+		}
+	}
+	return n, nil
+}
+
+func (b *boundedBuffer) Bytes() []byte { return b.buf }
 
 // newGhorgLog creates the 0600 temp file that captures a mirror run's full ghorg
 // output (WS3 of #48). Like apply's captured output it is a persistent drill-down

@@ -2,14 +2,86 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
+	"github.com/redscaresu/goldfinger/apply"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestCancelOnSignalRestoresHandlingBeforeCancelling pins the ordering, which is
+// the whole reason this is hand-rolled instead of signal.NotifyContext. The
+// delegates now run in their own process group, so the terminal no longer reaches
+// them and this context is the only thing that stops a running mirror; if the
+// delegate is wedged, the operator's next move is a second Ctrl-C, and that only
+// works if default handling was restored first. NotifyContext leaves the signal
+// registered, swallowing every later one.
+func TestCancelOnSignalRestoresHandlingBeforeCancelling(t *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	// The hook reports what the context looked like AT restore-time, which is what
+	// makes this an ordering assertion rather than a liveness one: merely waiting for
+	// both to happen would pass just as happily on a `cancel(); restore()`
+	// implementation, and that is precisely the version with the swallowed Ctrl-C
+	// window. Reading ctx from the hook is ordered, not racy — the assignment below
+	// happens-before the send on sigs, which happens-before the receive that runs it.
+	var ctx context.Context
+	observed := make(chan error, 1)
+	ctx = cancelOnSignal(context.Background(), sigs, func() { observed <- ctx.Err() })
+
+	require.NoError(t, ctx.Err(), "the context must stay live until a signal arrives")
+	sigs <- syscall.SIGINT
+
+	select {
+	case err := <-observed:
+		assert.NoError(t, err,
+			"the context was already cancelled when handling was restored — the run starts unwinding "+
+				"during a window where a second Ctrl-C is still swallowed")
+	case <-time.After(5 * time.Second):
+		t.Fatal("default signal handling was never restored — a second Ctrl-C would be swallowed")
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the signal did not cancel the root context")
+	}
+	assert.Equal(t, context.Canceled, ctx.Err())
+}
+
+// TestInterruptError locks the message an interrupted run reports. A cancelled
+// delegate surfaces as "signal: killed" wrapped in whichever step was running,
+// which reads as a goldfinger failure rather than as the operator stopping it.
+func TestInterruptError(t *testing.T) {
+	live, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	killed := errors.New("multi-gitter run: signal: killed")
+
+	assert.Equal(t, killed, interruptError(live, killed), "an uncancelled context leaves the real error alone")
+	assert.NoError(t, interruptError(live, nil))
+
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	assert.NoError(t, interruptError(cancelled, nil), "a run that finished despite the signal is still a success")
+	err := interruptError(cancelled, killed)
+	require.Error(t, err)
+	assert.Equal(t, "interrupted", err.Error())
+	assert.Equal(t, 2, exitCode(err), "an interrupted run did not complete: a failure, not a domain signal")
+
+	// The exception: an error that already identified itself as an interruption
+	// survives whole. A batched apply reports how far it got, and on a real run
+	// those PRs exist on GitHub — collapsing that to one word would hide the only
+	// thing the operator now has to act on.
+	progress := fmt.Errorf("%w after batch 2/5 — those PRs are already open", apply.ErrInterrupted)
+	assert.Equal(t, progress, interruptError(cancelled, progress))
+	assert.Contains(t, interruptError(cancelled, progress).Error(), "batch 2/5")
+}
 
 // TestExitErrorMessage locks the other half of the exit-code contract (the code
 // mapping itself is covered by TestExitCode): a code-only exitError — as `check`

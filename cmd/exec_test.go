@@ -5,8 +5,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/redscaresu/goldfinger/apply"
+	"github.com/redscaresu/goldfinger/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -109,6 +113,78 @@ func TestExecApplyRunLiveStreamsWithoutCapture(t *testing.T) {
 	got, err := execApplyRun(context.Background(), "sh", []string{"-c", "exit 0"}, os.Environ())
 	require.NoError(t, err)
 	assert.Nil(t, got)
+}
+
+func TestExecApplyRunDryRunBoundsTheRetainedOutput(t *testing.T) {
+	// A chatty change command times a large fleet is how the captured buffer used to
+	// grow without limit. Retention is now the last maxCapturedOutput bytes, which
+	// is the half that matters: multi-gitter writes its repo-counter block last, so
+	// the tail is what the digest is parsed from. The sentinel stands in for that
+	// block.
+	lines := (maxCapturedOutput / 8) + 50_000 // ~8 bytes/line, comfortably over the limit
+	script := "yes 0123456 | head -n " + strconv.Itoa(lines) + "; echo tail-sentinel"
+
+	got, err := execApplyRunQuiet(context.Background(), "sh", []string{"-c", script, "--dry-run"}, os.Environ())
+	require.NoError(t, err)
+
+	assert.Contains(t, string(got), "tail-sentinel", "the tail — where the result block lands — must survive")
+	assert.Less(t, len(got), maxCapturedOutput+512, "retention must be bounded, marker aside")
+	assert.True(t, strings.HasPrefix(string(got), "[goldfinger] earlier output dropped"),
+		"a truncated capture must say so: apply writes this buffer to a file it labels the full run output")
+}
+
+func TestExecApplyRunDryRunUntruncatedOutputCarriesNoMarker(t *testing.T) {
+	got, err := execApplyRunQuiet(context.Background(), "sh", []string{"-c", "echo short", "--dry-run"}, os.Environ())
+	require.NoError(t, err)
+	assert.Equal(t, "short\n", string(got), "an output that fits is returned verbatim, with no marker")
+}
+
+// TestTruncationNeverManufacturesAResultSectionHeader covers the sharper half of
+// the same hazard: the fragment truncation leaves of the line it cut through. Here
+// the cut lands inside "Repositories with a successful run:", leaving
+// "positories with a successful run:" — a line the parser reads as a section
+// header because it ends in ":", though no such line was ever written. octo/a would
+// bucket under it as an error with that fragment as the reason, and the REAL header
+// further down would set the parser's recognised-format flag, so the digest would
+// look parseable and the misreport would pass unnoticed. Discarding the fragment is
+// what keeps octo/a honestly unknown.
+func TestTruncationNeverManufacturesAResultSectionHeader(t *testing.T) {
+	repos := []models.Repo{{Owner: "octo", Name: "a"}, {Owner: "octo", Name: "b"}}
+	tail := "positories with a successful run:\n  octo/a\nNo data was changed:\n  octo/b\n"
+	buf := &boundedBuffer{limit: len(tail)}
+	_, _ = buf.Write([]byte("Re" + tail))
+	require.True(t, buf.truncated, "the cut must land inside the header for this to test anything")
+
+	digest := apply.SummarizeDryRunOutput(repos, capturedOutput(buf))
+
+	assert.Equal(t, apply.DryRunUnknown, digest.Repos[0].Status,
+		"a repo under a header that truncation invented is unknown, never confidently bucketed")
+	assert.Zero(t, digest.Errored, "a line fragment must not become an error section")
+	assert.Equal(t, apply.DryRunNoChange, digest.Repos[1].Status,
+		"the intact section after the fragment must still parse — dropping the fragment must not cost real data")
+}
+
+// TestTruncationMarkerCannotBecomeAResultSectionHeader is the reason the marker
+// ends in "." rather than ":". Once the cut fragment is discarded the retained tail
+// can legitimately begin with a section's indented repo lines — its header having
+// BEEN that fragment — so the marker is then the first header-shaped line the parser
+// meets. multi-gitter's headers are exactly "lines ending in a colon", so a marker
+// ending in ":" would become the bucket for those repos and label them errored with
+// the marker text as the reason. Leaving them "unknown" is the truth.
+func TestTruncationMarkerCannotBecomeAResultSectionHeader(t *testing.T) {
+	repos := []models.Repo{{Owner: "octo", Name: "repo"}}
+	// What truncation leaves of "No data was changed:\n  octo/repo\n" when the cut
+	// lands three bytes into the header: the fragment goes, the repo line stays.
+	tail := "ed:\n  octo/repo\n"
+	buf := &boundedBuffer{limit: len(tail)}
+	_, _ = buf.Write([]byte("No data was chang" + tail))
+	require.True(t, buf.truncated, "the header must have been cut for this to test anything")
+
+	digest := apply.SummarizeDryRunOutput(repos, capturedOutput(buf))
+
+	assert.Equal(t, apply.DryRunUnknown, digest.Repos[0].Status,
+		"a repo whose section header was truncated away is unknown, never bucketed under the marker")
+	assert.Zero(t, digest.Errored, "the marker must not be read as an error section header")
 }
 
 // TestNewGhorgLogIsOwnerOnly locks the 0600 perm on the captured mirror output
