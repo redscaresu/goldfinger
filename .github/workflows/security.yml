@@ -1,0 +1,22 @@
+name: Security
+
+# The shared security gates from redscaresu/github-actions: zizmor, gitleaks,
+# govulncheck, CodeQL and dependency review, as `security / <job>` checks.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions: {}
+
+jobs:
+  security:
+    name: security
+    permissions:
+      contents: read
+      security-events: write # a caller covers every called job, even with codeql: false
+    uses: redscaresu/github-actions/.github/workflows/security.yml@a10d7b3d071d40fb18d4b41d5df95697678e7645 # v1.0.1
+    with:
+      codeql: false # codeql.yml still runs CodeQL until the old workflows are removed
