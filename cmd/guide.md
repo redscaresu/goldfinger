@@ -164,9 +164,11 @@ WORKFLOW
      git clean removes files, not commits, so it cannot recover a diverged clone.
      Keep the durable artifact (the lockfile), not the clones.
 
-     The lockfile is authoritative: goldfinger strips set-narrowing/pruning
-     GHORG_* env vars, forces an empty ghorgignore, points ghorgonly at a path
-     that doesn't exist (it's an allowlist — an empty one would clone nothing),
+     The lockfile is authoritative: goldfinger drops every GHORG_* env var but a
+     few speed/output knobs (concurrency, clone delay, colour, quiet), forces
+     an empty ghorgignore, clears ghorg's repo filter hook, points ghorgonly at
+     a path that doesn't exist (it's an allowlist — an empty one would clone
+     nothing),
      and hands both ghorg and multi-gitter a config file of its own. Note what
      that last one means for you: your ~/.config/ghorg/conf.yaml and
      ~/.multi-gitter/config are neutralised for goldfinger runs — deliberately,

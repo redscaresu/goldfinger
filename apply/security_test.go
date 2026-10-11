@@ -27,7 +27,7 @@ import (
 //
 // Run just them:
 //
-//	go test ./... -run 'ShellQuote|StripsSourcePAT|ScrubsEveryCredentialVar|DuplicatedDecls|DriftTestCopies|OverridesExistingToken|Refuses|RequiresValidSignMode|SignModeArgs|LocalSign|NeutralisingConfig|NeutralisesAmbient|PinsEmptyGhorgConfig|DisarmsGhorgonly|PinsLayout|PinsAuthRoute|Invocation|RunPatternIsAccurate|ScrubsGitGrandchildVars|PrefixDropStopsAtTheFamily'
+//	go test ./... -run 'ShellQuote|StripsSourcePAT|ScrubsEveryCredentialVar|DuplicatedDecls|DriftTestCopies|OverridesExistingToken|Refuses|RequiresValidSignMode|SignModeArgs|LocalSign|NeutralisingConfig|NeutralisesAmbient|PinsEmptyGhorgConfig|DisarmsGhorgonly|PinsLayout|PinsAuthRoute|DropsUnlisted|Invocation|RunPatternIsAccurate|ScrubsGitGrandchildVars|PrefixDropStopsAtTheFamily'
 //
 // That alternation is not maintained by hand — TestSecurityTestRunPatternIsAccurate
 // parses it back out of this comment and fails if it misses a marked test or

@@ -111,32 +111,52 @@ func setHostile(t *testing.T, hostile map[string]string) map[string]string {
 	return hostile
 }
 
-// assertScrubbed proves a scrub category is closed, in BOTH directions, and
-// exists because the obvious version of this check is a tautology. Building the
-// assertions by ranging over the package list makes the test self-referential:
-// deleting a name from the list deletes its own assertion, so the scrub silently
-// stops covering it and every test still passes. That is not hypothetical —
-// negative-testing this file by removing two entries from contentGhorgEnv
-// produced zero failures, which is how the shape was found.
-//
-// So the names come from the caller's literal map, which fails if a name is
-// dropped from the list, and the list must be a SUBSET of that map, which fails
-// if a name is added to the list without a hostile value being planted here (an
-// assertion against a variable the environment never held passes for free).
-// Together the list and the test can only change in step.
-func assertScrubbed(t *testing.T, category string, hostile map[string]string, list, env []string) {
+// assertScrubbed proves every name in hostile — each planted with a real value by
+// setHostile — is absent from the child environment. The names come from the
+// test's own literal map rather than from a package list on purpose: ranging over
+// the list under test is a tautology, since deleting a name from it deletes its
+// assertion too. The rule is the allowlist now, so these maps are the regression
+// set it is checked against: the knobs known to break an invariant, by category.
+func assertScrubbed(t *testing.T, category string, hostile map[string]string, env []string) {
 	t.Helper()
-	names := make([]string, 0, len(hostile))
 	for name := range hostile {
-		names = append(names, name)
-	}
-	assert.Subsetf(t, names, list,
-		"every %s var must be given a hostile value in this test — one that is not set here is asserted against an environment that never held it", category)
-	for _, name := range names {
+		assert.Falsef(t, allowedGhorgEnv[name], "%s ghorg var %s must never be allowlisted", category, name)
 		for _, e := range env {
 			assert.NotContainsf(t, e, name+"=", "%s ghorg var %s must be stripped from the child environment", category, name)
 		}
 	}
+}
+
+// TestMirrorDropsUnlistedGhorgEnv is the test the allowlist exists for: a GHORG_*
+// knob nobody has classified yet must not reach ghorg. GHORG_REPO_FILTER_HOOK is
+// the case that forced the change — added in ghorg v1.11.15, it runs a host
+// executable with every token-bearing clone URL on stdin and the token in its
+// environment, and the old deny-list did not name it. GHORG_FOO stands in for
+// whatever ghorg adds next. The allowlisted knobs must still pass through, or
+// the allowlist has quietly become "drop everything".
+func TestMirrorDropsUnlistedGhorgEnv(t *testing.T) {
+	securityTest(t)
+	hostile := setHostile(t, map[string]string{
+		"GHORG_REPO_FILTER_HOOK":          "/host/hook.sh",
+		"GHORG_INCLUDE_SCM_DATA":          "true",
+		"GHORG_FOO":                       "anything",
+		"GHORG_EXIT_CODE_ON_CLONE_ISSUES": "0",
+		"GHORG_STATS_ENABLED":             "true",
+	})
+	for name := range allowedGhorgEnv {
+		t.Setenv(name, "host-value")
+	}
+
+	var cap capture
+	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{}))
+
+	assertScrubbed(t, "unclassified", hostile, cap.env)
+	for name := range allowedGhorgEnv {
+		assert.Contains(t, cap.env, name+"=host-value", "allowlisted %s must reach ghorg", name)
+	}
+	assert.Contains(t, cap.args, "--repo-filter-hook=",
+		"the hook must be cleared in argv too, which outranks a host config file")
+	assert.Contains(t, cap.env, tokenEnv+"=tok", "the var goldfinger sets itself must survive the scrub")
 }
 
 func TestMirrorNeutralisesAmbientConfig(t *testing.T) {
@@ -169,7 +189,7 @@ func TestMirrorNeutralisesAmbientConfig(t *testing.T) {
 	var cap capture
 	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{}))
 
-	assertScrubbed(t, "ambient", hostile, ambientGhorgEnv, cap.env)
+	assertScrubbed(t, "ambient", hostile, cap.env)
 
 	var ignorePath string
 	for _, a := range cap.args {
@@ -403,7 +423,7 @@ func TestMirrorPinsLayoutAgainstHostConfig(t *testing.T) {
 		"output dir must be pinned to the owner so GHORG_OUTPUT_DIR can't relocate clones")
 	assert.Contains(t, cap.args, "--preserve-scm-hostname=false",
 		"scm-hostname nesting must be pinned off so clones stay directly under <ws>/<owner>")
-	assertScrubbed(t, "layout", hostile, layoutGhorgEnv, cap.env)
+	assertScrubbed(t, "layout", hostile, cap.env)
 }
 
 // TestMirrorNeutralisesAmbientCloneContent covers the category goldfinger is most
@@ -434,7 +454,7 @@ func TestMirrorNeutralisesAmbientCloneContent(t *testing.T) {
 	var cap capture
 	require.NoError(t, Mirror(context.Background(), cap.run, userSelection(), "tok", Options{Branch: "dev"}))
 
-	assertScrubbed(t, "clone-content", hostile, contentGhorgEnv, cap.env)
+	assertScrubbed(t, "clone-content", hostile, cap.env)
 	assert.Contains(t, cap.args, "--branch=dev", "the operator's branch must still be the one passed")
 	for _, a := range cap.args {
 		assert.NotContains(t, a, "--clone-depth", "no depth was asked for, so none may be applied")
@@ -475,7 +495,7 @@ func TestMirrorPinsAuthRouteAgainstHostConfig(t *testing.T) {
 		"the base URL must be explicitly cleared so the token can only be spent against github.com")
 	assert.Contains(t, cap.args, "--scm=github",
 		"the forge must be pinned so the lockfile's GitHub names are resolved against GitHub")
-	assertScrubbed(t, "auth-route", hostile, authRouteGhorgEnv, cap.env)
+	assertScrubbed(t, "auth-route", hostile, cap.env)
 }
 
 func TestMirrorOrgCloneType(t *testing.T) {
