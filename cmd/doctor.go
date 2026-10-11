@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/redscaresu/goldfinger/client"
+	"github.com/redscaresu/goldfinger/models"
 	"github.com/spf13/cobra"
 )
 
@@ -460,12 +461,14 @@ func probeToolVersion(ctx context.Context, path string) string {
 
 // scrubTokenEnv returns env with every credential-bearing variable removed, so a
 // probed child can never receive (and therefore never echo) goldfinger's token.
+// The set comes from models.CredentialEnvVars — the same list apply and mirror
+// scrub — so a credential variable added there is covered here without anyone
+// remembering to update a second copy.
 func scrubTokenEnv(env []string) []string {
-	drop := map[string]bool{
-		tokenEnvVar:          true, // GOLD_FINGER_PAT
-		"GITHUB_TOKEN":       true,
-		"GH_TOKEN":           true,
-		"GHORG_GITHUB_TOKEN": true,
+	vars := models.CredentialEnvVars()
+	drop := make(map[string]bool, len(vars))
+	for _, v := range vars {
+		drop[v] = true
 	}
 	out := make([]string, 0, len(env))
 	for _, kv := range env {

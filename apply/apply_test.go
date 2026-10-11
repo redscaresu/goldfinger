@@ -270,23 +270,195 @@ func TestApplyStripsSourcePATFromChildEnv(t *testing.T) {
 	assert.Contains(t, cap.env, tokenEnv+"=mapped-token")
 }
 
-func TestApplyPinsEmptyConfig(t *testing.T) {
+// TestApplyScrubsEveryCredentialVarFromChildEnv locks the identity invariant: the
+// account goldfinger announces and the account a child acts as are the same by
+// construction. multi-gitter runs the operator's change script as a grandchild of
+// this process, and gh resolves GH_TOKEN AHEAD of the GITHUB_TOKEN goldfinger
+// sets — so a script that shells out to gh under an ambient GH_TOKEN would open
+// PRs as a different account, silently. Asserting on the whole credential set (not
+// just the source PAT) is the point: a GOLD_FINGER_PAT-only test passed for the
+// entire time this gap was open.
+func TestApplyScrubsEveryCredentialVarFromChildEnv(t *testing.T) {
 	securityTest(t)
-	// multi-gitter is pointed at a goldfinger-owned empty config so host config
-	// discovery can't override the lockfile selection. The file must exist at
-	// call time and be cleaned up afterwards.
+	for _, v := range models.CredentialEnvVars() {
+		t.Setenv(v, "ambient-"+v)
+	}
+	t.Setenv("GOLDFINGER_TEST_UNRELATED", "keep-me")
+
 	var cap capture
-	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "t")
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), baseSpec(), "mapped-token")
 	require.NoError(t, err)
 
-	var configPath string
-	for _, a := range cap.args {
-		if strings.HasPrefix(a, "--config=") {
-			configPath = strings.TrimPrefix(a, "--config=")
+	assert.Equal(t, map[string]string{tokenEnv: "mapped-token"}, credentialVarsIn(cap.env),
+		"exactly one credential variable — multi-gitter's own, carrying goldfinger's resolved token — may reach the child")
+	for _, e := range cap.env {
+		assert.NotContains(t, e, "ambient-", "no ambient credential value may reach the child under any name")
+	}
+	assert.Contains(t, cap.env, "GOLDFINGER_TEST_UNRELATED=keep-me", "the scrub must not strip unrelated vars")
+}
+
+// TestApplyScrubsGitGrandchildVarsFromChildEnv is the one surface where the
+// mirror and apply sides are SYMMETRIC, which is why it is worth a test on both
+// and a comment saying so. Everywhere else, multi-gitter is excused from the
+// log-knob occupation that ghorg needs, because it installs a CensorFormatter
+// rewriting the token to "<TOKEN>" in every line it logs (cmd/logging.go:69-78).
+// That argument stops here: under --git-type=cmd — which is exactly what
+// --sign=local selects — multi-gitter execs git without setting cmd.Env
+// (internal/git/cmdgit/git.go:66) after embedding the PAT in the clone URL
+// (internal/scm/github/repository.go:20-21), and git writes its own trace file.
+// multi-gitter never sees those bytes, so it cannot censor them.
+func TestApplyScrubsGitGrandchildVarsFromChildEnv(t *testing.T) {
+	securityTest(t)
+	setGitHostileEnv(t)
+
+	var cap capture
+	spec := baseSpec()
+	spec.Sign = models.SignLocal // the mode that makes multi-gitter shell out to git
+	_, err := Apply(context.Background(), cap.run, twoRepoSelection(), spec, "mapped-token")
+	require.NoError(t, err)
+
+	assertGitEnvScrubbed(t, cap.env)
+}
+
+// credentialVarsIn returns the credential-bearing entries of a child environment,
+// as name→value.
+func credentialVarsIn(env []string) map[string]string {
+	creds := map[string]string{}
+	for _, e := range env {
+		name, val, _ := strings.Cut(e, "=")
+		for _, v := range models.CredentialEnvVars() {
+			if name == v {
+				creds[name] = val
+			}
 		}
 	}
-	require.NotEmpty(t, configPath, "apply must pass an explicit --config to multi-gitter")
-	_, statErr := os.Stat(configPath)
+	return creds
+}
+
+// occupiedConfigKeys are the multi-gitter settings goldfinger must claim in the
+// config file it writes, with why each one matters. Claiming a key is what stops
+// multi-gitter's static ~/.multi-gitter/config filling it in, because a config
+// value is only applied to a flag that is not already set — so a key dropped from
+// this list silently hands that setting back to the host.
+//
+// It is spelled out rather than derived from multiGitterNeutralConfig, which
+// would assert nothing: the point is that removing a key has to be a deliberate,
+// reviewed act, and the reason has to survive with it.
+//
+// Each entry carries the VALUE as well as the key, and that half matters at least
+// as much. Occupancy alone is not the guarantee — the guarantee is occupancy with
+// the flag's neutral default, because goldfinger's --config is layered ABOVE the
+// host's static file and applied to any flag the argv did not set, so whatever
+// value sits here is authoritative. Asserting only that a key is present would
+// pass a config that read `skip-pr: true`, which multi-gitter honours by never
+// checking out the feature branch and pushing HEAD — the base branch — directly
+// onto every selected repo. A test for this file has to pin what the keys SAY,
+// not merely that they are said.
+var occupiedConfigKeys = []struct {
+	key string
+	val string
+	why string
+}{
+	{"token", `""`, "a static token is preferred over the GITHUB_TOKEN goldfinger sets, so PRs would be opened by an account goldfinger never announced; empty is what makes multi-gitter fall through to the environment, where goldfinger's credential travels"},
+	{"username", `""`, "pairs with token as an alternative credential"},
+	{"base-url", `""`, "would point the whole run at a different GitHub host"},
+	{"platform", "github", "would switch the run to another forge entirely"},
+	{"ssh-auth", "false", "would push over SSH keys instead of the resolved token — a different credential"},
+	{"org", `[""]`, "a different flag than --repo, so a static one ADDS repos: PRs on repos never in the lockfile"},
+	{"user", `[""]`, "as org"},
+	{"group", `[""]`, "as org (GitLab)"},
+	{"project", `[""]`, "as org (GitLab)"},
+	{"topic", `[""]`, "as org"},
+	{"skip-repo", `[""]`, "the same hole inverted — silently drops repos that WERE in the lockfile"},
+	{"repo-search", `""`, "as org"},
+	{"code-search", `""`, "as org"},
+	{"repo-include", `""`, "filters the resolved set below the lockfile"},
+	{"repo-exclude", `""`, "filters the resolved set below the lockfile"},
+	{"skip-forks", "false", "filters the resolved set below the lockfile"},
+	{"include-subgroups", "false", "widens the resolved set beyond the lockfile (GitLab)"},
+	{"fork", "false", "would push the branch to a fork instead of the repo under review"},
+	{"fork-owner", `""`, "would push the branch to another owner's fork"},
+	{"skip-pr", "false", "the worst one: multi-gitter only checks out the feature branch when it is opening a PR, so skip-pr pushes HEAD — the BASE branch — turning a PR fanout into a direct push onto every repo's default branch"},
+	{"push-only", "false", "pushes the branch and opens no PR, so a reviewed fanout silently produces nothing to review"},
+	{"pr-auto-merge", "false", "would merge the PRs goldfinger opens without the human who is supposed to press merge"},
+	{"dry-run", "false", "a static true would make a confirmed live run silently do nothing while goldfinger reports success"},
+	{"interactive", "false", "would block on a per-repo prompt in a run whose output goldfinger captures and whose stdin is not a terminal"},
+	{"manual-commit", "false", "expects the script to commit; goldfinger's generated script does not, so changes would go uncommitted"},
+	{"conflict-strategy", "skip", "replace force-pushes over an existing branch; skip is what makes a part-failed batch safely re-runnable"},
+	{"push-option", `[""]`, "passes server-side options like ci.skip through git push, and breaks the run outright under the default go-git"},
+	{"api-push", "false", "only passed for --sign github, so a static true signs a --sign none/local run with GitHub's web-flow key instead"},
+	{"git-type", "go", "only passed for --sign local, so a static cmd routes a --sign none run through the operator's git and their commit.gpgsign"},
+	{"author-name", `""`, "setting an author makes multi-gitter reduce the commit env to GIT_AUTHOR/COMMITTER_*, stripping HOME/GPG_TTY and breaking the --sign local signing goldfinger announced"},
+	{"author-email", `""`, "as author-name — and multi-gitter errors outright if only one of the pair is set"},
+	{"base-branch", `""`, "goldfinger omits --base-branch so each PR targets that repo's own default branch; a static one silently retargets every PR, and the clone, at a single branch"},
+	{"pr-body", `""`, "only passed when non-empty, so a static body would appear on PRs whose digest showed none"},
+	{"draft", "false", "only passed when the operator asked for it, so a static true drafts PRs the digest reported as ready"},
+	{"max-reviewers", "0", "a separate flag from reviewers, so it still binds when goldfinger names reviewers explicitly — and randomly shrinks the list the digest showed"},
+	{"max-team-reviewers", "0", "as max-reviewers"},
+	{"output", `"-"`, "multi-gitter writes its per-repo status block there, and that block is exactly what SummarizeDryRunOutput parses; a static path would empty the digest the human approves"},
+}
+
+// mustNotOccupyConfigKeys are the keys that meet the same rule and must stay OUT
+// of the config, because for these occupancy is not neutral. multi-gitter reads
+// them through a helper that returns nil for an unset flag, and its GitHub layer
+// treats nil as "leave alone" but a non-nil empty slice as "make the PR match
+// this" — so claiming the key removes every reviewer, label and assignee the PR
+// already has (internal/scm/github/github.go setReviewers/setAssignees/setLabels).
+//
+// This is the inverse of occupiedConfigKeys and matters more: adding one of these
+// looks like completing the list, and the damage — stripping the reviewers
+// CODEOWNERS requested — is silent, remote, and on every run.
+var mustNotOccupyConfigKeys = []string{"labels", "reviewers", "team-reviewers", "assignees"}
+
+// TestApplyPinsNeutralisingConfig locks the config goldfinger hands multi-gitter.
+// The subtlety worth a test is that an EMPTY file here would be inert: --config is
+// layered above the static ~/.multi-gitter/config rather than replacing it, so the
+// defence is occupying keys, not passing a file. The file must therefore exist,
+// carry every key in occupiedConfigKeys, and be cleaned up afterwards.
+func TestApplyPinsNeutralisingConfig(t *testing.T) {
+	securityTest(t)
+	var cap capture
+	var content string
+	var readErr error
+	run := func(ctx context.Context, name string, args, env []string) ([]byte, error) {
+		// Read from inside the run: Apply removes the file on return.
+		for _, a := range args {
+			if path, ok := strings.CutPrefix(a, "--config="); ok {
+				var b []byte
+				b, readErr = os.ReadFile(path) //nolint:gosec // G304: path is the temp file Apply just created, captured from its own argv.
+				content = string(b)
+			}
+		}
+		return cap.run(ctx, name, args, env)
+	}
+	_, err := Apply(context.Background(), run, twoRepoSelection(), baseSpec(), "t")
+	require.NoError(t, err)
+
+	var configPaths []string
+	for _, a := range cap.args {
+		if path, ok := strings.CutPrefix(a, "--config="); ok {
+			configPaths = append(configPaths, path)
+		}
+	}
+	require.Len(t, configPaths, 1, "apply must pass exactly one --config to multi-gitter")
+
+	require.NoError(t, readErr, "the config must exist while multi-gitter runs")
+	// Assert the exact line, key AND value. Key presence alone would pass a config
+	// that claimed a key with a HARMFUL value — and since this file outranks the
+	// host's, goldfinger would then be the one turning a PR fanout into a direct
+	// push (skip-pr), signing with a key the run did not announce (api-push,
+	// git-type), or making a confirmed live run do nothing (dry-run).
+	for _, k := range occupiedConfigKeys {
+		assert.Contains(t, content, "\n"+k.key+": "+k.val+"\n",
+			"config must claim %q with its neutral value %q, otherwise the host's static config supplies it — or goldfinger's own does, which is worse: %s", k.key, k.val, k.why)
+	}
+
+	for _, k := range mustNotOccupyConfigKeys {
+		assert.NotContains(t, content, "\n"+k+":",
+			"config must NOT claim %q: multi-gitter reads it as a set-but-empty slice and strips every %s the PR already has", k, k)
+	}
+
+	_, statErr := os.Stat(configPaths[0])
 	assert.True(t, os.IsNotExist(statErr), "temp config should be removed after Apply returns")
 }
 

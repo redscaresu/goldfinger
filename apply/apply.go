@@ -15,7 +15,161 @@ import (
 )
 
 // tokenEnv is the environment variable multi-gitter reads its GitHub PAT from.
-const tokenEnv = "GITHUB_TOKEN" //nolint:gosec // G101: this is the name of an env var, not a hardcoded credential.
+const tokenEnv = models.MultiGitterTokenEnvVar
+
+// multiGitterNeutralConfig is the config file goldfinger hands multi-gitter on
+// every run, and it is deliberately not empty.
+//
+// An empty file would do nothing, because multi-gitter's --config does not
+// REPLACE its static ~/.multi-gitter/config — it is layered above it. Both are
+// applied by the same rule (cmd/config.go bindFlags, v0.63.1): a config value is
+// written into a flag only "if the flag is not set". So the static file fills in
+// every knob goldfinger leaves off argv, and an empty --config blocks nothing.
+// Two of goldfinger's stated guarantees fall to that:
+//
+//   - Identity. `token:` in the static file is written into the --token flag, and
+//     multi-gitter prefers that flag over the GITHUB_TOKEN goldfinger sets
+//     (cmd/other.go getToken) — so it would open PRs as an account goldfinger
+//     never resolved and never announced. `ssh-auth:` and `base-url:` are the
+//     same defect by another route: a different credential, a different host.
+//   - The exact set. goldfinger passes the lockfile as repeated --repo flags, but
+//     `org:`/`user:`/`topic:`/`repo-search:` are DIFFERENT flags, so a static one
+//     is added rather than overridden and multi-gitter targets their repos too —
+//     opening PRs on repos that were never in the reviewed lockfile. `skip-repo:`
+//     is the same hole inverted, silently dropping repos that were.
+//   - The act itself, and how it is signed. `skip-pr:` is the worst of these:
+//     multi-gitter only checks out the feature branch when it is opening a PR
+//     (internal/multigitter/run.go), and GitHub has no remote-reference override,
+//     so skip-pr pushes `HEAD` — still the BASE branch — to origin. A single
+//     static line would turn a reviewed PR fanout into a direct push onto every
+//     selected repo's default branch. `pr-auto-merge:` lands the PRs goldfinger
+//     opens without the human who is supposed to press merge, and `api-push:` /
+//     `git-type:` / `author-*:` each move commits onto a signing path other than
+//     the one `--sign` named and the run announced.
+//
+// The fix follows from the same rule that causes it: a key present here marks its
+// flag as set, so the static file can no longer fill it in. Every value below is
+// therefore the neutral one — what that flag means when nobody asked for
+// anything — chosen so the entry suppresses the static config without itself
+// changing behaviour. `token: ""` is the load-bearing example: it blocks a static
+// token while leaving getToken to fall through to the environment, which is where
+// goldfinger's own token is and the only place a credential is allowed to travel.
+//
+// The inclusion rule is anything goldfinger is accountable for having stated: WHO
+// the run acts as, WHICH repos it touches, WHAT it does to them, and every knob
+// goldfinger models as a flag of its own and prints in the dry-run digest. That
+// last category is the easiest to under-draw, because those keys look like the
+// operator's business — but goldfinger passes most of them only when non-empty
+// (--base-branch, --pr-body, --draft, --labels, --reviewers), so on any run that
+// leaves one off, a static value silently fills it and the digest the human
+// approved becomes a description of a different run.
+//
+// A key goldfinger already sets on argv is still listed. That is not redundant
+// belt-and-braces, it is the same rule read the other way: bindFlags skips a flag
+// that is already set, so on the runs where goldfinger passes the flag its own
+// value wins and the entry is inert — and on the runs where it does NOT pass it
+// (--api-push only for SignGitHub, --git-type only for SignLocal, --dry-run only
+// for a dry run, and every conditional flag above) the entry is the only thing
+// holding the default.
+//
+// What is deliberately left to the operator is the complement: knobs goldfinger
+// does not model at all and never reports, so a host default contradicts nothing
+// it said — merge-type (reachable only via pr-auto-merge, pinned off here),
+// fetch-depth, concurrent, clone-dir, log level.
+//
+// One exception, and it is the reason this list is not simply "every flag".
+// labels, reviewers, team-reviewers and assignees meet the rule and are still
+// absent, because for them occupancy is not neutral: multi-gitter reads them with
+// a helper that returns nil for an unset flag, and its GitHub layer treats nil as
+// "leave alone" but a non-nil EMPTY slice as "make the PR match this" — i.e.
+// remove every existing one (internal/scm/github/github.go setReviewers /
+// setAssignees / setLabels). Claiming the key would therefore strip the reviewers
+// CODEOWNERS requested and the labels a repo's automation added, on every run, on
+// every host — a certain harm traded for a conditional one. State the residual
+// exactly, because it is not merely additive: on runs where the operator named
+// none of the four, a static value still reaches multi-gitter, and multi-gitter
+// reconciles the PR TO that value — so it can put metadata goldfinger never
+// reported onto the PR, and on a re-run that updates an existing PR (both
+// CreatePullRequest and UpdatePullRequest call the same three setters) it can
+// equally strip reviewers or labels added since. What it cannot touch is
+// identity, the repo set, the action, or the signing path.
+//
+// Verified against multi-gitter v0.63.1 rather than reasoned about: with a
+// hostile ~/.multi-gitter/config, each key above reaches multi-gitter's own
+// validation (or, for base-branch, retargets a real dry run) when the config
+// passed is empty, and does not when it is this one; argv still overrides this
+// file; and a static `token:` stops winning while the environment still supplies
+// goldfinger's. The `[""]` entries are the neutral form for a string slice, not a
+// slice holding one empty string: bindFlags calls Set("") for the single element,
+// and pflag parses that as an empty slice while still marking the flag set. That
+// last property is also why the four keys in the exception above cannot be
+// listed — for them multi-gitter reads "set to empty" as an instruction, not as
+// an absence.
+//
+// The logging keys (log-file, log-level, log-format) are deliberately NOT
+// occupied, and the reason is worth stating because the mirror side reaches the
+// opposite conclusion about the same-shaped knob: GHORG_DEBUG is scrubbed there
+// because ghorg prints the PAT under it, whereas multi-gitter installs a
+// CensorFormatter that rewrites the token to "<TOKEN>" in every log line it emits
+// (cmd/logging.go:69-78), so no log level discloses it. Nor can log-file blind
+// the digest goldfinger shows the human before a real run: `run` writes the
+// repo-counter block to r.Output (internal/multigitter/run.go:136-140), which is
+// the `output` key occupied above, not to the logger. Do not "balance" the two
+// sides by occupying these — the asymmetry is a real property of the delegates.
+const multiGitterNeutralConfig = `# Written by goldfinger for a single run; every value is the flag's neutral
+# default. Its purpose is to occupy these keys so that multi-gitter's static
+# ~/.multi-gitter/config cannot fill them in — see apply.multiGitterNeutralConfig.
+
+# Who the run acts as.
+token: ""
+username: ""
+base-url: ""
+platform: github
+ssh-auth: false
+
+# Which repos it touches. The lockfile arrives as repeated --repo flags; every
+# key here is a DIFFERENT flag that would widen or narrow that set.
+org: [""]
+user: [""]
+group: [""]
+project: [""]
+topic: [""]
+skip-repo: [""]
+repo-search: ""
+code-search: ""
+repo-include: ""
+repo-exclude: ""
+skip-forks: false
+include-subgroups: false
+fork: false
+fork-owner: ""
+
+# What it does to them, and how the commits are signed.
+skip-pr: false
+push-only: false
+pr-auto-merge: false
+dry-run: false
+interactive: false
+manual-commit: false
+conflict-strategy: skip
+push-option: [""]
+api-push: false
+git-type: go
+author-name: ""
+author-email: ""
+
+# What goldfinger printed in the digest. Each of these has a goldfinger flag that
+# is only passed when non-empty, so without an entry here the host supplies it on
+# every run that leaves it off. labels/reviewers/team-reviewers/assignees belong
+# to this group but are deliberately absent — see the "one exception" note in
+# apply.multiGitterNeutralConfig; occupying them would strip PR metadata.
+base-branch: ""
+pr-body: ""
+draft: false
+max-reviewers: 0
+max-team-reviewers: 0
+output: "-"
+`
 
 // sleep pauses between batches. It is a package var so tests can stub it and not
 // actually wait.
@@ -68,18 +222,29 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 	}
 	defer cleanup()
 
-	// Point multi-gitter at an empty config file so its default config-file
-	// discovery (which can carry its own repo/org selection and filters) can't
-	// override the exact lockfile set goldfinger passes as --repo flags.
-	configPath, cfgCleanup, err := writeEmptyFile("goldfinger-mg-config-*.yaml")
+	// Disarm multi-gitter's static config file (see multiGitterNeutralConfig for
+	// why an empty file is not enough, and what it would otherwise cost).
+	configPath, cfgCleanup, err := writeTempFile("goldfinger-mg-config-*.yaml", multiGitterNeutralConfig)
 	if err != nil {
 		return Result{}, err
 	}
 	defer cfgCleanup()
 
-	// Map the PAT onto multi-gitter's own token var, and strip the source var
-	// so the raw PAT never reaches multi-gitter or the user's apply script.
-	env := overrideEnv(os.Environ(), tokenEnv, token, models.TokenEnvVar)
+	// Strip EVERY credential-bearing variable, then map the resolved PAT onto
+	// multi-gitter's own token var. Scrubbing the whole set — not just the source
+	// PAT — is what makes the announced identity and the acting identity the same:
+	// multi-gitter runs the operator's script as a grandchild of this process, and
+	// a script that shells out to gh resolves an ambient GH_TOKEN ahead of the
+	// GITHUB_TOKEN we set, so it would act as a different account entirely.
+	//
+	// git's own tracing knobs go too, because multi-gitter execs git directly
+	// under --git-type=cmd (what --sign=local selects) with the PAT already in
+	// the clone URL, and GIT_TRACE prints argv to a path the host chose. The
+	// CensorFormatter that excuses multi-gitter's log keys from being occupied
+	// cannot help: git writes that file itself, so multi-gitter never sees the
+	// bytes to censor them.
+	env := overrideEnv(os.Environ(), tokenEnv, token,
+		append(models.CredentialEnvVars(), models.GitGrandchildEnvVars()...)...)
 
 	// Split the selection into batches so PR creation stays under GitHub's
 	// secondary rate limit (80 content-generating requests/min). Each batch is a
@@ -228,13 +393,24 @@ func writeScript(cmd []string) (path string, cleanup func(), err error) {
 	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
 }
 
-// writeEmptyFile creates an empty temp file matching pattern and returns its
-// path and a cleanup func. Used to hand multi-gitter an empty --config so its
-// default config-file discovery can't override the lockfile selection.
-func writeEmptyFile(pattern string) (path string, cleanup func(), err error) {
+// writeTempFile creates a 0600 temp file matching pattern, writes content to it,
+// and returns its path and a cleanup func. An empty content yields an empty file.
+//
+// Both packages use it to neutralise a delegate's ambient config discovery, and
+// the two shapes are why it takes content rather than always writing nothing:
+// ghorg is disarmed by a file that says nothing (its config file only ever ADDS
+// keys), while multi-gitter needs a file that says something, because its
+// explicit --config is layered ABOVE the static ~/.multi-gitter/config rather
+// than replacing it — see multiGitterNeutralConfig.
+func writeTempFile(pattern, content string) (path string, cleanup func(), err error) {
 	f, err := os.CreateTemp("", pattern)
 	if err != nil {
 		return "", nil, fmt.Errorf("create temp file: %w", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", nil, fmt.Errorf("write temp file: %w", err)
 	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(f.Name())
@@ -251,19 +427,41 @@ func shellQuote(s string) string {
 // overrideEnv returns base with key set to val exactly once, and every var named
 // in drop removed. Any pre-existing key= entries are stripped before appending
 // key=val: on Linux getenv returns the FIRST duplicate, so a value already
-// present (e.g. CI's own GITHUB_TOKEN) would otherwise win over ours. drop lets
-// callers scrub the source PAT var so it never reaches the child.
+// present in the environment would otherwise win over ours. drop lets callers
+// scrub the source PAT var so it never reaches the child.
+//
+// A drop entry ending in "*" is a PREFIX, matching every variable that starts
+// with the text before it. Exact names are the norm and should stay the norm —
+// a prefix scrubs variables nobody enumerated, which is only safe when the
+// family is owned by someone else and genuinely grows (git's GIT_TRACE* knobs,
+// see models.GitGrandchildEnvVars). Do not reach for it to save typing.
 func overrideEnv(base []string, key, val string, drop ...string) []string {
 	strip := map[string]bool{key: true}
+	var prefixes []string
 	for _, d := range drop {
+		if p, ok := strings.CutSuffix(d, "*"); ok {
+			prefixes = append(prefixes, p)
+			continue
+		}
 		strip[d] = true
 	}
 	out := make([]string, 0, len(base)+1)
 	for _, e := range base {
 		name := e[:strings.IndexByte(e+"=", '=')]
-		if !strip[name] {
-			out = append(out, e)
+		if strip[name] || hasAnyPrefix(name, prefixes) {
+			continue
 		}
+		out = append(out, e)
 	}
 	return append(out, key+"="+val)
+}
+
+// hasAnyPrefix reports whether name starts with any of prefixes.
+func hasAnyPrefix(name string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/redscaresu/goldfinger/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -233,21 +235,44 @@ func TestSigningCheckAcceptsGitTruthyValues(t *testing.T) {
 	}
 }
 
+// TestScrubTokenEnvRemovesCredentials plants EVERY name in the canonical credential
+// set, not the four that are obviously tokens. scrubTokenEnv derives its drop set
+// from models.CredentialEnvVars, so a test that planted a subset would assert only
+// the weaker half of the fact: it would keep passing while a variable added to the
+// canonical list — a GitHub App identity, or GHORG_TOKEN_CMD, which ghorg runs as
+// `sh -c` and uses the output of — rode into a probed child untouched.
+//
+// The names are literals for the reason the models test spells out: ranging over
+// models.CredentialEnvVars() here would build the input from the same list the code
+// reads, so deleting an entry would delete its own assertion. The Subset check is
+// the other half — it fails loudly when the canonical list grows past what this test
+// plants, which is the moment someone has to come back and add the literal.
 func TestScrubTokenEnvRemovesCredentials(t *testing.T) {
-	in := []string{
-		"PATH=/usr/bin",
-		tokenEnvVar + "=secret1",
-		"GITHUB_TOKEN=secret2",
-		"GH_TOKEN=secret3",
-		"GHORG_GITHUB_TOKEN=secret4",
-		"HOME=/home/ada",
+	planted := []string{
+		"GOLD_FINGER_PAT",
+		"GITHUB_TOKEN",
+		"GH_TOKEN",
+		"GHORG_GITHUB_TOKEN",
+		"GHORG_GITHUB_APP_ID",
+		"GHORG_GITHUB_APP_INSTALLATION_ID",
+		"GHORG_GITHUB_APP_PEM_PATH",
+		"GHORG_GITHUB_TOKEN_FROM_GITHUB_APP",
+		"GHORG_TOKEN_CMD",
 	}
-	out := scrubTokenEnv(in)
-	joined := strings.Join(out, "\n")
+	assert.Subset(t, planted, models.CredentialEnvVars(),
+		"every canonical credential variable must be planted here, or this test asserts only the ones it happens to know about")
+
+	in := []string{"PATH=/usr/bin", "HOME=/home/ada"}
+	for i, name := range planted {
+		in = append(in, fmt.Sprintf("%s=secret-value-%02d", name, i))
+	}
+
+	joined := strings.Join(scrubTokenEnv(in), "\n")
 	assert.Contains(t, joined, "PATH=/usr/bin")
 	assert.Contains(t, joined, "HOME=/home/ada")
-	for _, secret := range []string{"secret1", "secret2", "secret3", "secret4"} {
-		assert.NotContains(t, joined, secret, "no token value may survive scrubbing")
+	for i, name := range planted {
+		assert.NotContainsf(t, joined, fmt.Sprintf("secret-value-%02d", i),
+			"%s must not survive scrubbing: a probed child that receives it can echo it", name)
 	}
 }
 

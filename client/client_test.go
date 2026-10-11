@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-github/v89/github"
@@ -115,6 +116,63 @@ func TestListReposAuthenticatedOwnerPath(t *testing.T) {
 	assert.Equal(t, models.OwnerUser, ownerType)
 	require.Len(t, repos, 1)
 	assert.Equal(t, "me/private-thing", repos[0].FullName())
+}
+
+// TestListReposAuthenticatedOwnerPathIsCaseInsensitive locks the fix for a
+// silent-wrong-answer bug. GitHub resolves logins case-insensitively, but
+// c.login holds the one canonical spelling, so an operator who passes --org with
+// different case (copied off a profile page) used to miss the `owner == c.login`
+// fast path and fall through to /users/{login}/repos — whose contract is PUBLIC
+// repositories only. The result was a frozen lockfile silently missing every
+// private repo, with no error and no warning: everything downstream then works
+// perfectly on a set the operator never asked for.
+//
+// The public-only endpoint is registered here rather than left to 404 on purpose,
+// so a regression yields the WRONG SET instead of an error — which is exactly how
+// the bug presented.
+func TestListReposAuthenticatedOwnerPathIsCaseInsensitive(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"redscaresu"}`)
+	})
+	mux.HandleFunc("/user/repos", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "[%s,%s]", repoJSON("redscaresu", "public-thing", nil, false), repoJSON("redscaresu", "private-thing", nil, false))
+	})
+	mux.HandleFunc("/users/RedScareSU", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"redscaresu","type":"User"}`)
+	})
+	mux.HandleFunc("/users/RedScareSU/repos", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "[%s]", repoJSON("redscaresu", "public-thing", nil, false))
+	})
+	c := newTestClient(t, mux)
+
+	repos, ownerType, err := c.ListRepos(context.Background(), "RedScareSU")
+	require.NoError(t, err)
+	assert.Equal(t, models.OwnerUser, ownerType)
+	require.Len(t, repos, 2, "a case-mismatched own login must still reach the authenticated-user endpoint, which includes private repos")
+	assert.Equal(t, []string{"public-thing", "private-thing"}, []string{repos[0].Name, repos[1].Name})
+}
+
+// TestOwnerTypeCaseInsensitiveFastPath pins the cheaper half of the same fix: the
+// authenticated identity is always a User, so a case-mismatched own login needs
+// no API round-trip. This path was never wrong (Users.Get resolves case-
+// insensitively and returns the right type), only wasteful.
+func TestOwnerTypeCaseInsensitiveFastPath(t *testing.T) {
+	var lookups atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"login":"redscaresu"}`)
+	})
+	mux.HandleFunc("/users/", func(w http.ResponseWriter, r *http.Request) {
+		lookups.Add(1)
+		fmt.Fprint(w, `{"login":"redscaresu","type":"User"}`)
+	})
+	c := newTestClient(t, mux)
+
+	got, err := c.OwnerType(context.Background(), "RedScareSU")
+	require.NoError(t, err)
+	assert.Equal(t, models.OwnerUser, got)
+	assert.Zero(t, lookups.Load(), "the authenticated identity is always a User — no owner lookup should be needed")
 }
 
 func TestBranchExists(t *testing.T) {
