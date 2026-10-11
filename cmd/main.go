@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"syscall"
 
 	"github.com/redscaresu/goldfinger/apply"
 	"github.com/spf13/cobra"
@@ -107,8 +106,9 @@ func resolveQuiet(root, cmd *cobra.Command, args []string) bool {
 	return quiet
 }
 
-// interruptContext returns a root context cancelled by the first SIGINT or
-// SIGTERM, plus a function that restores default signal handling.
+// interruptContext returns a root context cancelled by the first of
+// interruptSignals (SIGINT, SIGTERM, and on unix SIGHUP and SIGQUIT), plus a
+// function that restores default signal handling.
 //
 // It is one half of a pair and only works as one. Ctrl-C used to reach the
 // delegates for free — ghorg and multi-gitter shared goldfinger's process group,
@@ -126,7 +126,7 @@ func resolveQuiet(root, cmd *cobra.Command, args []string) bool {
 // is ignoring the kill has no way out short of another terminal.
 func interruptContext(parent context.Context) (context.Context, func()) {
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigs, interruptSignals...)
 	restore := func() { signal.Stop(sigs) }
 	return cancelOnSignal(parent, sigs, restore), restore
 }

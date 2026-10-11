@@ -631,6 +631,41 @@ func TestApplyBatchErrorReportsBatchNumber(t *testing.T) {
 	assert.Equal(t, "batch-1\nbatch two output", string(result.Output))
 }
 
+// TestApplyInterruptMidBatchKeepsBatchIndex covers a signal that lands while a
+// batch is running, not between two. The delegate is killed and reports
+// "signal: killed"; unless that is tagged ErrInterrupted the CLI collapses it to
+// "interrupted", and the operator loses the one fact they must act on — the
+// batches before this one have already opened PRs.
+func TestApplyInterruptMidBatchKeepsBatchIndex(t *testing.T) {
+	orig := sleep
+	sleep = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { sleep = orig })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	killed := errors.New("signal: killed")
+	calls := 0
+	run := func(context.Context, string, []string, []string) ([]byte, error) {
+		calls++
+		if calls == 2 {
+			cancel() // Ctrl-C while batch two is running
+			return nil, killed
+		}
+		return nil, nil
+	}
+	spec := baseSpec()
+	spec.BatchSize = 2
+	spec.DryRun = false
+	spec.Confirm = true
+
+	_, err := Apply(ctx, run, fiveRepoSelection(), spec, "t")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInterrupted, "the CLI keeps the message whole only if it is tagged as an interruption")
+	assert.ErrorIs(t, err, killed, "the delegate's own error is still reachable")
+	assert.Contains(t, err.Error(), "batch 2/3")
+	assert.Contains(t, err.Error(), "PRs are already open")
+}
+
 func TestApplySignModeArgs(t *testing.T) {
 	securityTest(t)
 	tests := []struct {

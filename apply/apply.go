@@ -301,6 +301,12 @@ func Apply(ctx context.Context, run Runner, s models.Selection, spec models.Appl
 		out, err := run(ctx, "multi-gitter", args, env)
 		result.Output = appendBatchOutput(result.Output, out)
 		if err != nil {
+			// A signal that lands mid-batch kills the delegate, so the error is
+			// "signal: killed" — which the CLI would collapse to one word, losing the
+			// batch index and with it the fact that earlier batches opened PRs.
+			if ctx.Err() != nil && len(batches) > 1 {
+				return result, interruptedDuring(i+1, len(batches), spec.DryRun, err)
+			}
 			if len(batches) > 1 {
 				return result, fmt.Errorf("multi-gitter run (batch %d/%d): %w", i+1, len(batches), err)
 			}
@@ -323,6 +329,17 @@ func interruptedAfter(done, total int, dryRun bool) error {
 		return fmt.Errorf("%w after batch %d/%d — nothing was pushed; the digest covers those repos only", ErrInterrupted, done, total)
 	}
 	return fmt.Errorf("%w after batch %d/%d — those PRs are already open", ErrInterrupted, done, total)
+}
+
+// interruptedDuring is interruptedAfter for a signal that landed while a batch
+// was running rather than between two: the batches before it completed, and this
+// one may have pushed part of its share, so a real run says so. It wraps both
+// ErrInterrupted, so the CLI keeps the message whole, and the delegate's error.
+func interruptedDuring(batch, total int, dryRun bool, err error) error {
+	if dryRun {
+		return fmt.Errorf("%w during batch %d/%d — nothing was pushed; the digest covers the batches before it only: %w", ErrInterrupted, batch, total, err)
+	}
+	return fmt.Errorf("%w during batch %d/%d — earlier batches' PRs are already open, and this batch may have opened some: %w", ErrInterrupted, batch, total, err)
 }
 
 // appendBatchOutput concatenates one batch's captured output onto the run's.

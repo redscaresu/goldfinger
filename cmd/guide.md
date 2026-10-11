@@ -444,7 +444,7 @@ MACHINE-READABLE OUTPUT
   {version, error, exitCode} under --quiet (the `error` surface in schema). A
   domain-signal exit (drift, a failed doctor check) prints nothing; the exit code
   carries it (0 ok / 1 domain outcome / 2 error).
-  Interrupting a run: Ctrl-C (or SIGTERM) cancels it and kills the delegate AND
+  Interrupting a run: Ctrl-C (or SIGTERM, or closing the terminal) cancels it and kills the delegate AND
   everything the delegate spawned — ghorg's git children included — instead of
   leaving them cloning into the workspace after goldfinger has exited. It reports
   `interrupted` and exits 2: the run did not complete, so that is a failure, not a
