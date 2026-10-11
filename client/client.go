@@ -530,6 +530,15 @@ func sleepFor(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// WithoutRetry makes every call on c a single attempt: a rate limit comes back
+// at once, still answering IsRateLimited, instead of being waited out. It is for
+// doctor, whose job is to say a limit is in force and when it lifts — not to sit
+// out the very minute the operator ran it to learn about. Returns c for chaining.
+func (c *Client) WithoutRetry() *Client {
+	c.retry.attempts = 1
+	return c
+}
+
 // Verify confirms the token works and returns the authenticated user's login.
 // It fails fast so a bad token surfaces before any repo work begins.
 func (c *Client) Verify(ctx context.Context) (string, error) {

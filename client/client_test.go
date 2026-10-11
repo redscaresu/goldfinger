@@ -872,6 +872,26 @@ func TestRetryWait(t *testing.T) {
 // budget it picks: a New that quietly stopped installing one would leave every
 // call unretried with the rest of this file still green, because the tests set
 // their own policy to keep the waits short.
+// doctor runs on the client WithoutRetry returns, and doctor is most often run
+// right after a fleet run died on a limit. A retrying client would sit out that
+// limit before reporting it — the opposite of a preflight. One request, an error
+// doctor can still recognise as a limit, and no sleep.
+func TestWithoutRetryAnswersARateLimitAtOnce(t *testing.T) {
+	var hits atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/user", func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		writeRateLimited(w, http.StatusForbidden)
+	})
+	c := newTestClient(t, mux).WithoutRetry()
+
+	_, err := c.Verify(context.Background())
+
+	require.Error(t, err)
+	assert.Equal(t, int64(1), hits.Load(), "a single-attempt client must not retry a rate limit")
+	assert.True(t, IsRateLimited(err), "doctor tells a limit from a bad token by this, so it must survive")
+}
+
 func TestNewUsesTheProductionRetryBudget(t *testing.T) {
 	c, err := New("t0ken")
 	require.NoError(t, err)

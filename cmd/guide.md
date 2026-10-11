@@ -258,7 +258,9 @@ PREFLIGHT (doctor)
                      or where GitHub asks for longer than a minute, ends the run
                      telling you when to rerun. Asking costs nothing of what it
                      measures: GitHub does not bill the rate-limit endpoint
-                     against the limit it reports.
+                     against the limit it reports. doctor itself never waits a
+                     limit out: each of its calls is one attempt, so it reports
+                     the limit and its reset instead of sitting through it.
     - ghorg /      : each child tool's PATH location + version, or a fail with an
       multi-gitter   install hint if missing. multi-gitter is also checked against
                      goldfinger's known-good version floor (currently 0.63.1, the

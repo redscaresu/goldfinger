@@ -490,13 +490,15 @@ func statusColor(status string) string {
 
 // verifyLoginWithClient is the production principal check: it builds an API client
 // from the token and returns the authenticated login. It is only reached with a
-// non-empty token (authChecks resolves the token first).
+// non-empty token (authChecks resolves the token first). The client makes one
+// attempt per call: doctor reports a rate limit and when it lifts, it does not
+// wait it out first (the CLI and MCP doctor both come through here).
 func verifyLoginWithClient(ctx context.Context, token string) (string, error) {
 	c, err := client.New(token)
 	if err != nil {
 		return "", err
 	}
-	return c.Verify(ctx)
+	return c.WithoutRetry().Verify(ctx)
 }
 
 // readQuotaWithClient is the production quota probe: it asks GitHub's rate-limit
@@ -510,7 +512,7 @@ func readQuotaWithClient(ctx context.Context, token string) (client.Quota, error
 	if err != nil {
 		return client.Quota{}, err
 	}
-	return c.RemainingQuota(ctx)
+	return c.WithoutRetry().RemainingQuota(ctx)
 }
 
 // probeToolDefault reports whether name is on PATH and, best-effort, its version.
